@@ -1,5 +1,17 @@
-# Packaging metadata arrives with the first package in this repo.
-# Until then this file carries the pytest configuration only.
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "portcullis"
+version = "0.1.0"
+description = "A local tool call gate that decides whether a proposed tool call may proceed"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+
+[tool.setuptools]
+packages = ["portcullis"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
