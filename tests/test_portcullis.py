@@ -898,3 +898,287 @@ def test_cli_check_appends_the_decision_it_prints(tmp_path):
     )
     printed = json.loads(result.stdout)
     assert core.read_log(log_path) == [printed]
+
+
+# --- repair pass pins ---------------------------------------------------------
+
+
+def test_rewrite_into_an_interpreter_call_is_flagged():
+    rules = [
+        rule(
+            "become-shell",
+            "shell",
+            "rewrite",
+            {"argv0": {"exact": "ls"}},
+            substitute={"argv": ["sh", "-c", "id"]},
+        )
+    ]
+    decision = decide(shell_call(["ls"]), rules)
+    assert decision["decision"] == "rewrite"
+    assert decision["rewritten_call"]["argv"] == ["sh", "-c", "id"]
+    assert decision["interpreter"] is True
+
+
+def test_an_interpreter_call_rewritten_to_a_harmless_call_stays_flagged():
+    rules = [
+        rule(
+            "calm-shell",
+            "shell",
+            "rewrite",
+            {"argv0": {"exact": "sh"}},
+            substitute={"argv": ["echo", "hi"]},
+        )
+    ]
+    decision = decide(shell_call(["sh", "-c", "ls"]), rules)
+    assert decision["decision"] == "rewrite"
+    assert decision["rewritten_call"]["argv"] == ["echo", "hi"]
+    assert decision["interpreter"] is True
+
+
+def _write_log_lines(log_path, records):
+    with open(log_path, "w", encoding="utf-8") as handle:
+        for record in records:
+            handle.write(json.dumps(record) + "\n")
+    return log_path
+
+
+def _valid_allow_record():
+    rules = [rule("allow-ls", "shell", "allow", {"argv0": {"exact": "ls"}})]
+    return decide(shell_call(["ls"]), rules)
+
+
+def _valid_rewrite_record():
+    rules = [
+        rule(
+            "stage",
+            "shell",
+            "rewrite",
+            {"argv0": {"exact": "ls"}},
+            substitute={"argv": ["ls", "-la"]},
+        )
+    ]
+    return decide(shell_call(["ls"]), rules)
+
+
+def _assert_corruption_at_line_two(tmp_path, tampered):
+    log_path = tmp_path / "audit.jsonl"
+    _write_log_lines(log_path, [_valid_allow_record(), tampered])
+    with pytest.raises(core.LogCorruptionError) as caught:
+        core.read_log(log_path)
+    assert caught.value.line_number == 2
+
+
+def test_a_rewrite_record_with_an_invalid_rewritten_call_is_corruption(tmp_path):
+    tampered = _valid_rewrite_record()
+    tampered["rewritten_call"] = {
+        "format": "portcullis-call/1",
+        "kind": "shell",
+        "argv": [],
+    }
+    _assert_corruption_at_line_two(tmp_path, tampered)
+
+
+def test_a_non_rewrite_record_carrying_a_rewritten_call_is_corruption(tmp_path):
+    tampered = _valid_allow_record()
+    tampered["rewritten_call"] = shell_call(["ls"])
+    _assert_corruption_at_line_two(tmp_path, tampered)
+
+
+def _tamper(**changes):
+    record = _valid_allow_record()
+    record.update(changes)
+    return record
+
+
+CROSS_FIELD_TAMPERS = [
+    _tamper(source={"type": "malformed"}),
+    _tamper(
+        decision="deny", source={"type": "malformed"}, reason="a reason"
+    ),
+    _tamper(
+        decision="deny", source={"type": "malformed"}, interpreter=True
+    ),
+    _tamper(source={"type": "policy error", "detail": "a failure"}),
+    _tamper(reason=None),
+    _tamper(reason=""),
+    _tamper(
+        decision="deny", source={"type": "default"}, reason="a reason"
+    ),
+]
+
+
+@pytest.mark.parametrize("tampered", CROSS_FIELD_TAMPERS)
+def test_log_records_whose_fields_disagree_are_corruption(tmp_path, tampered):
+    _assert_corruption_at_line_two(tmp_path, tampered)
+
+
+def test_a_rewrite_record_with_a_default_source_is_corruption(tmp_path):
+    tampered = _valid_rewrite_record()
+    tampered["source"] = {"type": "default"}
+    tampered["reason"] = None
+    _assert_corruption_at_line_two(tmp_path, tampered)
+
+
+def test_a_log_record_with_a_non_hex_digest_is_corruption(tmp_path):
+    tampered = _tamper(call_digest="sha256:" + "z" * 64)
+    _assert_corruption_at_line_two(tmp_path, tampered)
+
+
+def test_a_policy_with_invalid_utf8_fails_closed_at_the_command_line(tmp_path):
+    policy_path = tmp_path / "policy.json"
+    policy_path.write_bytes(b"\xff\xfe\xfd")
+    call_path = write_json(tmp_path / "call.json", shell_call(["ls"]))
+    log_path = tmp_path / "audit.jsonl"
+    result = run_cli(
+        ["check", "--policy", str(policy_path), "--log", str(log_path), str(call_path)]
+    )
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    decision = json.loads(result.stdout)
+    assert decision["decision"] == "deny"
+    assert decision["source"]["type"] == "policy error"
+    assert len(core.read_log(log_path)) == 1
+
+
+def test_a_call_with_invalid_utf8_is_a_caller_error_at_the_command_line(tmp_path):
+    policy_path = write_json(tmp_path / "policy.json", policy_doc([]))
+    call_path = tmp_path / "call.json"
+    call_path.write_bytes(b"\xff\xfe\xfd")
+    log_path = tmp_path / "audit.jsonl"
+    result = run_cli(
+        ["check", "--policy", str(policy_path), "--log", str(log_path), str(call_path)]
+    )
+    assert result.returncode == 2
+    assert result.stdout == ""
+    assert "Traceback" not in result.stderr
+    assert result.stderr.count("\n") == 1
+    assert not log_path.exists()
+
+
+def test_strict_parse_refuses_a_lone_surrogate():
+    text = '{"format": "portcullis-call/1", "kind": "shell", "argv": ["\\ud800"]}'
+    with pytest.raises(ValueError):
+        core.strict_parse(text)
+
+
+def test_a_call_with_a_lone_surrogate_is_a_caller_error(tmp_path):
+    policy_path = write_json(tmp_path / "policy.json", policy_doc([]))
+    call_path = tmp_path / "call.json"
+    call_path.write_text(
+        '{"format": "portcullis-call/1", "kind": "shell", "argv": ["\\ud800"]}',
+        encoding="utf-8",
+    )
+    log_path = tmp_path / "audit.jsonl"
+    result = run_cli(
+        ["check", "--policy", str(policy_path), "--log", str(log_path), str(call_path)]
+    )
+    assert result.returncode == 2
+    assert result.stdout == ""
+    assert "Traceback" not in result.stderr
+    assert not log_path.exists()
+
+
+def test_a_policy_with_a_lone_surrogate_fails_closed(tmp_path):
+    policy_path = tmp_path / "policy.json"
+    policy_path.write_text(
+        '{"format": "portcullis-policy/1", "default": "deny", "rules": '
+        '[{"id": "a", "kind": "shell", "action": "allow", '
+        '"reason": "\\ud800", "match": {"argv0": {"exact": "ls"}}}]}',
+        encoding="utf-8",
+    )
+    call_path = write_json(tmp_path / "call.json", shell_call(["ls"]))
+    log_path = tmp_path / "audit.jsonl"
+    result = run_cli(
+        ["check", "--policy", str(policy_path), "--log", str(log_path), str(call_path)]
+    )
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    decision = json.loads(result.stdout)
+    assert decision["decision"] == "deny"
+    assert decision["source"]["type"] == "policy error"
+
+
+@pytest.mark.parametrize(
+    "condition",
+    [
+        {"match": {"exact": "x"}},
+        {"index": 1},
+    ],
+)
+def test_an_argument_condition_missing_a_key_never_loads(condition):
+    doc = policy_doc(
+        [rule("bad-cond", "shell", "allow", {"args": [condition]})]
+    )
+    with pytest.raises(core.PolicyError):
+        core.load_policy(doc)
+
+
+@pytest.mark.parametrize(
+    "condition",
+    [
+        {"match": {"exact": "x"}},
+        {"index": 1},
+    ],
+)
+def test_an_argument_condition_missing_a_key_fails_closed_at_the_cli(
+    tmp_path, condition
+):
+    policy_path = write_json(
+        tmp_path / "policy.json",
+        policy_doc([rule("bad-cond", "shell", "allow", {"args": [condition]})]),
+    )
+    call_path = write_json(tmp_path / "call.json", shell_call(["ls", "x"]))
+    log_path = tmp_path / "audit.jsonl"
+    result = run_cli(
+        ["check", "--policy", str(policy_path), "--log", str(log_path), str(call_path)]
+    )
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    decision = json.loads(result.stdout)
+    assert decision["decision"] == "deny"
+    assert decision["source"]["type"] == "policy error"
+
+
+def test_an_undecodable_log_line_is_corruption_at_its_line(tmp_path):
+    log_path = tmp_path / "audit.jsonl"
+    decision = _valid_allow_record()
+    core.append_decision(log_path, decision)
+    with open(log_path, "ab") as handle:
+        handle.write(b"\xff\xfe\n")
+    with pytest.raises(core.LogCorruptionError) as caught:
+        core.read_log(log_path)
+    assert caught.value.line_number == 2
+    result = run_cli(["log", "--log", str(log_path)])
+    assert result.returncode == 1
+    assert "line 2" in result.stderr
+
+
+def test_an_empty_file_path_message_is_truthful():
+    with pytest.raises(core.MalformedCall) as caught:
+        core.validate_call(file_call("read", ""))
+    assert "of no use" in str(caught.value)
+    assert "is not a string" not in str(caught.value)
+
+
+def test_an_empty_network_method_message_is_truthful():
+    with pytest.raises(core.MalformedCall) as caught:
+        core.validate_call(network_call("", "h.test", 80))
+    assert "of no use" in str(caught.value)
+    assert "is not a string" not in str(caught.value)
+
+
+def test_an_empty_network_host_message_is_truthful():
+    with pytest.raises(core.MalformedCall) as caught:
+        core.validate_call(network_call("GET", "", 80))
+    assert "of no use" in str(caught.value)
+    assert "is not a string" not in str(caught.value)
+
+
+def test_an_empty_rule_reason_message_is_truthful():
+    doc = policy_doc(
+        [rule("quiet", "shell", "allow", {"argv0": {"exact": "ls"}}, reason="")]
+    )
+    with pytest.raises(core.PolicyError) as caught:
+        core.load_policy(doc)
+    assert "of no use" in str(caught.value)
+    assert "is not a string" not in str(caught.value)
