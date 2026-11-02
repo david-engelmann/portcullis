@@ -56,6 +56,4 @@ Verify claims from the thing itself. A result is read from the file on disk, the
 
 The contract for this repo lives in CONTRACT.md and it defines the obligations this repo must meet. Read CONTRACT.md and the README before changing anything in portcullis.
 
-Portcullis guards the calls, deadbolt guards the credentials the calls ask for, hookdoctor grades the guards. Portcullis is the tool call gate between an agent and the machine it runs on, and its subject is the decision on whether a proposed tool call may proceed. This setup slice establishes the repo and its discipline only, and it claims no admission behaviour and no feature behaviour of any kind.
-
-The full contract is the first build act of this repo and it arrives with the first feature slice, which is a later slice than this setup slice.
+Portcullis guards the calls, deadbolt guards the credentials the calls ask for, hookdoctor grades the guards. Portcullis is the tool call gate between an agent and the machine it runs on, and its subject is the decision on whether a proposed tool call may proceed. Round 1 slice 1 builds the decision engine. It takes one structured call record and one policy, returns one decision record in the evaluation order CONTRACT.md fixes, and appends the decision to an audit log. It executes no call and wires into no harness.

@@ -10,9 +10,9 @@ Nothing enforces a policy across harnesses at the call itself. Hooks log that th
 
 The remote seed was verified on 2026-11-02 against the staged seed and its commit is 46b1cafe58e78f9b0820b81800b6727cc2ffae60, a parentless commit holding exactly README.md and LICENSE and .gitignore. Setup arrives through a pull request and no work lands on main directly.
 
-The contract lives in CONTRACT.md. Setup obligations S1 to S5 are the contract state until the full contract lands as the first build act of this repo, and this setup slice claims no feature behaviour for portcullis. ROADMAP.md stands as it landed ahead of setup and this slice does not change it.
+The contract lives in CONTRACT.md. The full contract landed as the first build act of this repo in Round 1 slice 1, and obligations S1 to S5 stand as its setup record with obligations PC-1 to PC-12 stating the behaviour of the gate. Round 1 slice 1 builds the decision engine. A structured call record and a policy go in, a decision record comes out, and the decision is appended to an audit log. The gate judges shell and file and network calls by rule in the evaluation order the contract fixes, and it fails closed when its policy cannot be loaded. It wires into no harness and executes nothing, and ROADMAP.md stands as it landed ahead of setup and this slice does not change it.
 
-Closed perfection rounds are 0 of 100. A round counts only when a full cycle of work and audit and review and red team and approval has closed, and seeding and setup are not rounds.
+Closed perfection rounds are 1 of 100. A round counts only when a full cycle of work and audit and review and red team and approval has closed, and seeding and setup are not rounds.
 
 The local gate is python -m pytest -q plus python scripts/codepoint_scan.py, run on the exact final head before any push, with the continuous integration workflow running the same commands as a backstop.
 
