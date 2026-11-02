@@ -79,22 +79,45 @@ def _refuse_constant(name):
     raise ValueError(f"the constant {name} is not strict JSON")
 
 
+def _check_encodable(value):
+    if isinstance(value, str):
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError:
+            raise ValueError(
+                "the document carries a string that is not encodable text"
+            ) from None
+        return
+    if isinstance(value, dict):
+        for key, item in value.items():
+            _check_encodable(key)
+            _check_encodable(item)
+        return
+    if isinstance(value, list):
+        for item in value:
+            _check_encodable(item)
+
+
 def strict_parse(text):
     """Parse one JSON document strictly or raise ValueError.
 
     Duplicate keys at any level, the non standard constants, trailing
     data, and nesting past the interpreter limit are all refused, so
     a document this function returns is the whole input and nothing
-    in it was silently overwritten or extended.
+    in it was silently overwritten or extended. A string that cannot
+    encode as UTF-8 is also refused, so a document whose strings are
+    not encodable text does not parse.
     """
     try:
-        return json.loads(
+        document = json.loads(
             text,
             object_pairs_hook=_object_without_duplicate_keys,
             parse_constant=_refuse_constant,
         )
     except RecursionError:
         raise ValueError("the document nests too deeply to parse") from None
+    _check_encodable(document)
+    return document
 
 
 def canonical(document):
@@ -164,7 +187,7 @@ def _validate_file(document):
     if document["operation"] not in FILE_OPERATIONS:
         raise MalformedCall("a file call names an operation outside the set")
     if not _is_text(document["path"]) or not document["path"]:
-        raise MalformedCall("a file call carries a path that is not a string")
+        raise MalformedCall("a file call carries a path of no use")
     if document["operation"] == "move":
         if "path2" not in document:
             raise MalformedCall("a move call carries no second path")
@@ -183,7 +206,7 @@ def _validate_network(document):
         "a network call",
     )
     if not _is_text(document["method"]) or not document["method"]:
-        raise MalformedCall("a network call carries a method that is not a string")
+        raise MalformedCall("a network call carries a method of no use")
     has_url = "url" in document
     has_host = "host" in document
     has_port = "port" in document
@@ -194,7 +217,7 @@ def _validate_network(document):
     if not (has_host and has_port):
         raise MalformedCall("a network call carries neither a url nor a host and port")
     if not _is_text(document["host"]) or not document["host"]:
-        raise MalformedCall("a network call carries a host that is not a string")
+        raise MalformedCall("a network call carries a host of no use")
     if not _valid_port(document["port"]):
         raise MalformedCall("a network call carries a port outside its range")
     result = dict(document)
@@ -339,6 +362,10 @@ def _validate_arg_conditions(value, what):
         if not isinstance(entry, dict):
             raise PolicyError(f"{what} carries an argument condition that is not an object")
         _check_policy_keys(entry, {"index", "match"}, f"{what} argument condition")
+        if "index" not in entry:
+            raise PolicyError(f"{what} carries an argument condition with no index")
+        if "match" not in entry:
+            raise PolicyError(f"{what} carries an argument condition with no match")
         if not _is_int(entry["index"]) or entry["index"] < 1:
             raise PolicyError(f"{what} names an argument position below 1")
         result.append(
@@ -430,7 +457,7 @@ def _validate_rule(rule, position, seen_ids):
     if rule["action"] not in ACTIONS:
         raise PolicyError(f"{what} names an action outside the set")
     if not _is_text(rule["reason"]) or not rule["reason"]:
-        raise PolicyError(f"{what} carries a reason that is not a string")
+        raise PolicyError(f"{what} carries a reason of no use")
     result = {
         "id": rule_id,
         "kind": rule["kind"],
@@ -611,7 +638,7 @@ def evaluate(policy, policy_error, document, at):
             "rewrite",
             {"type": "rule", "rule": rule["id"]},
             rule["reason"],
-            interpreter,
+            interpreter or is_interpreter_call(rewritten),
             rewritten,
         )
     return _decision(
@@ -663,6 +690,7 @@ def _validate_decision_record(record, line_number):
         not _is_text(digest)
         or not digest.startswith("sha256:")
         or len(digest) != len("sha256:") + 64
+        or any(char not in "0123456789abcdefABCDEF" for char in digest[7:])
     ):
         raise LogCorruptionError(line_number, f"{what} carries a digest of no use")
     if record["decision"] not in ("allow", "deny", "rewrite"):
@@ -686,10 +714,44 @@ def _validate_decision_record(record, line_number):
         raise LogCorruptionError(line_number, f"{what} carries a reason of no use")
     if type(record["interpreter"]) is not bool:
         raise LogCorruptionError(line_number, f"{what} carries an interpreter flag of no use")
+    if source_type == "malformed":
+        if (
+            record["decision"] != "deny"
+            or record["reason"] is not None
+            or record["interpreter"] is not False
+        ):
+            raise LogCorruptionError(
+                line_number, f"{what} carries fields that disagree with a malformed source"
+            )
+    elif source_type == "policy error":
+        if record["decision"] != "deny":
+            raise LogCorruptionError(
+                line_number, f"{what} carries fields that disagree with a policy error source"
+            )
+    elif source_type == "rule":
+        if not _is_text(record["reason"]) or not record["reason"]:
+            raise LogCorruptionError(
+                line_number, f"{what} carries a rule source with no reason"
+            )
+    elif source_type == "default":
+        if record["reason"] is not None:
+            raise LogCorruptionError(
+                line_number, f"{what} carries a default source with a reason"
+            )
+    if record["decision"] == "rewrite" and source_type != "rule":
+        raise LogCorruptionError(
+            line_number, f"{what} rewrites without a rule source"
+        )
     rewritten = record["rewritten_call"]
     if record["decision"] == "rewrite":
         if not isinstance(rewritten, dict):
             raise LogCorruptionError(line_number, f"{what} rewrites and carries no call")
+        try:
+            validate_call(rewritten)
+        except MalformedCall:
+            raise LogCorruptionError(
+                line_number, f"{what} carries a rewritten call that fails call validation"
+            ) from None
     elif rewritten is not None:
         raise LogCorruptionError(line_number, f"{what} carries a rewritten call and does not rewrite")
     return record
@@ -702,16 +764,23 @@ def read_log(log_path):
     LogCorruptionError naming the first line that fails.
     """
     try:
-        text = open(log_path, encoding="utf-8").read()
+        with open(log_path, "rb") as handle:
+            data = handle.read()
     except FileNotFoundError:
         raise CallerError(f"the audit log at {log_path} does not stand") from None
     except OSError as exc:
         raise CallerError(f"the audit log at {log_path} cannot be read, {exc}") from exc
     records = []
-    lines = text.split("\n")
-    if lines and lines[-1] == "":
-        lines.pop()
-    for number, line in enumerate(lines, start=1):
+    raw_lines = data.split(b"\n")
+    if raw_lines and raw_lines[-1] == b"":
+        raw_lines.pop()
+    for number, raw_line in enumerate(raw_lines, start=1):
+        try:
+            line = raw_line.decode("utf-8")
+        except UnicodeDecodeError:
+            raise LogCorruptionError(
+                number, f"the record at line {number} does not decode as UTF-8"
+            ) from None
         try:
             record = strict_parse(line)
         except ValueError:

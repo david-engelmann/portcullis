@@ -28,6 +28,10 @@ def _read_call_text(path):
     try:
         with open(path, encoding="utf-8") as handle:
             return handle.read()
+    except UnicodeDecodeError as exc:
+        raise core.CallerError(
+            f"the call document at {path} cannot be read, {exc}"
+        ) from exc
     except OSError as exc:
         raise core.CallerError(
             f"the call document at {path} cannot be read, {exc}"
@@ -39,6 +43,8 @@ def _load_policy(path):
     try:
         with open(path, encoding="utf-8") as handle:
             text = handle.read()
+    except UnicodeDecodeError as exc:
+        return None, f"the policy at {path} cannot be read, {exc}"
     except OSError as exc:
         return None, f"the policy at {path} cannot be read, {exc}"
     try:
