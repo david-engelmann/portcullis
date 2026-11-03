@@ -38,6 +38,8 @@ jobs:
         with:
           toolchain: stable
       - name: Build the binding and run the smoke suite
+        env:
+          VIRTUAL_ENV: ${{ github.workspace }}/.venv-binding
         run: |
           python -m venv .venv-binding
           .venv-binding/bin/python -m pip install maturin==1.16.0 pytest==9.2.0
