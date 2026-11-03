@@ -30,7 +30,11 @@
 //! encodable refuses with the reader's own words, an integer
 //! wider than the reader's bound refuses with the reader's own
 //! words, and nesting deeper than the reader's bound refuses
-//! with the reader's own words. Object keys come from the
+//! with the reader's own words. A float that is not a number
+//! refuses with the reader's own parse words, because no
+//! document the reader accepts can hold one, while the
+//! infinities cross, because an overflowing number literal in
+//! a document the reader accepts produces them. Object keys come from the
 //! dictionary itself, so a subclass cannot invent keys the
 //! dictionary does not hold, and a key that is not a string is
 //! a type error, as is any value that is not a JSON document
@@ -86,6 +90,7 @@ const INT_DIGIT_LIMIT: usize = 4300;
 const MAX_DEPTH: usize = 1000;
 const TOO_WIDE_TEXT: &str = "the document carries an integer too wide to parse";
 const TOO_DEEP_TEXT: &str = "the document nests too deeply to parse";
+const DOES_NOT_PARSE_TEXT: &str = "the document does not parse";
 const NOT_ENCODABLE_TEXT: &str = "the document carries a string that is not encodable text";
 
 // A bit count past which an integer certainly carries more
@@ -264,6 +269,9 @@ fn to_value(value: &Bound<'_, PyAny>, depth: usize) -> Result<Value, ConvertErro
         let number: f64 = value.extract().map_err(|_| {
             ConvertError::Type("a number in the document could not be read".to_string())
         })?;
+        if number.is_nan() {
+            return Err(ConvertError::Reader(DOES_NOT_PARSE_TEXT.to_string()));
+        }
         return Ok(Value::Float(number));
     }
     if let Ok(text) = value.cast::<PyString>() {

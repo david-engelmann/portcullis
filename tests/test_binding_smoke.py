@@ -31,14 +31,6 @@ def cli_binary():
     named = os.environ.get("PORTCULLIS_BIN")
     if named:
         return Path(named)
-    target = os.environ.get("CARGO_TARGET_DIR")
-    candidates = []
-    if target:
-        candidates.append(Path(target) / "debug" / "portcullis")
-    candidates.append(REPO_ROOT / "target" / "debug" / "portcullis")
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
     subprocess.run(
         ["cargo", "build", "--bin", "portcullis"],
         cwd=REPO_ROOT,
@@ -46,6 +38,11 @@ def cli_binary():
         capture_output=True,
         text=True,
     )
+    target = os.environ.get("CARGO_TARGET_DIR")
+    candidates = []
+    if target:
+        candidates.append(Path(target) / "debug" / "portcullis")
+    candidates.append(REPO_ROOT / "target" / "debug" / "portcullis")
     for candidate in candidates:
         if candidate.exists():
             return candidate
@@ -424,7 +421,6 @@ def test_a_boolean_argument_index_is_no_index_at_all(tmp_path):
 
 def test_integer_discipline_at_the_document_edge(tmp_path):
     policy = fixture("policy-full.json")
-    call = fixture("call-shell-allow.json")
     log = tmp_path / "audit.jsonl"
     wide_values = [
         10**5000,
@@ -449,7 +445,6 @@ def test_integer_discipline_at_the_document_edge(tmp_path):
     with pytest.raises(TypeError):
         portcullis.check(policy, network_call(IndexOnly()), log, AT)
     assert portcullis.read_log(log) == [judged]
-    assert call["kind"] == "shell"
 
 
 def test_hostile_shapes_refuse_cleanly(tmp_path):
@@ -524,6 +519,60 @@ def test_the_many_starred_glob_answers_inside_its_bound(tmp_path):
     assert hit["decision"] == "allow"
     assert hit["source"] == {"rule": "starred", "type": "rule"}
     assert hit_elapsed < 10.0
+
+
+def test_not_a_number_refuses_as_the_reader_refuses_it(tmp_path):
+    policy = fixture("policy-full.json")
+    log = tmp_path / "audit.jsonl"
+    with pytest.raises(portcullis.CallerError) as caught:
+        portcullis.check(policy, network_call(float("nan")), log, AT)
+    assert str(caught.value) == "the document does not parse"
+    assert not log.exists()
+
+    nan_policy = {
+        "format": "portcullis-policy/1",
+        "default": "deny",
+        "rules": [
+            {
+                "id": "nan-port",
+                "kind": "network",
+                "action": "allow",
+                "reason": "a port that is not a number",
+                "match": {"port": {"exact": float("nan")}},
+            }
+        ],
+    }
+    decision = portcullis.check(nan_policy, network_call(8443), log, AT)
+    assert decision["decision"] == "deny"
+    assert decision["source"] == {
+        "detail": "the document does not parse",
+        "type": "policy error",
+    }
+
+    overflowed = portcullis.check(policy, network_call(float("inf")), log, AT)
+    assert overflowed["decision"] == "deny"
+    assert overflowed["source"] == {"type": "malformed"}
+
+    call_path = tmp_path / "nan-call.json"
+    call_path.write_text(
+        '{"format": "portcullis-call/1", "kind": "network", "method": "POST",'
+        ' "host": "hooks.example.test", "port": NaN}',
+        encoding="utf-8",
+    )
+    policy_path = tmp_path / "policy.json"
+    policy_path.write_text(json.dumps(policy), encoding="utf-8")
+    judged = run_cli(
+        "check",
+        "--policy",
+        str(policy_path),
+        "--log",
+        str(tmp_path / "cli.jsonl"),
+        str(call_path),
+    )
+    assert judged.returncode == 2
+    assert judged.stderr == (
+        "error: the call document does not parse as strict JSON\n"
+    )
 
 
 def test_the_exceptions_form_one_family():
