@@ -2089,3 +2089,104 @@ fn an_empty_rule_reason_message_is_truthful() {
     assert!(error.0.contains("of no use"), "{}", error.0);
     assert!(!error.0.contains("is not a string"), "{}", error.0);
 }
+
+// --- CodeRabbit repair pins ---------------------------------------------
+
+cross_field_tamper!(
+    log_records_whose_fields_disagree_rule_source_with_an_empty_rule,
+    "tamper-cross-11",
+    vec![(
+        "source",
+        Value::obj(vec![("type", s("rule")), ("rule", s(""))]),
+    )]
+);
+cross_field_tamper!(
+    log_records_whose_fields_disagree_policy_error_with_a_reason,
+    "tamper-cross-12",
+    vec![
+        ("decision", s("deny")),
+        (
+            "source",
+            Value::obj(vec![
+                ("type", s("policy error")),
+                ("detail", s("a failure")),
+            ]),
+        ),
+    ]
+);
+
+#[test]
+fn a_rewrite_record_whose_interpreter_flag_denies_its_rewritten_call_is_corruption() {
+    let rules = vec![rule(
+        "become-shell",
+        "shell",
+        "rewrite",
+        Value::obj(vec![("argv0", matcher("exact", "ls"))]),
+        "a reason",
+        Some(Value::obj(vec![(
+            "argv",
+            arr(vec![s("sh"), s("-c"), s("id")]),
+        )])),
+    )];
+    let mut tampered = decide(&shell_call(&["ls"]), rules, "deny");
+    assert_eq!(field(&tampered, "interpreter"), &Value::Bool(true));
+    set_field(&mut tampered, "interpreter", Value::Bool(false));
+    assert_corruption_at_line_two("tamper-cross-13", tampered);
+}
+
+#[test]
+fn a_many_starred_glob_against_a_long_token_answers_at_once() {
+    // The remembered failure states bound the match work by
+    // the pattern length times the text length. Without them
+    // this pair retries every split at every star.
+    let rules = vec![plain_rule(
+        "many-stars",
+        "shell",
+        "allow",
+        Value::obj(vec![("argv0", matcher("glob", "*a*a*a*a*a*a*a*a*a*a*b"))]),
+    )];
+    let near_miss = "a".repeat(400);
+    let decision = decide(&shell_call(&[near_miss.as_str()]), rules.clone(), "deny");
+    assert_eq!(field(&decision, "decision"), &s("deny"));
+    let hit = format!("{near_miss}b");
+    let policy = load_policy(&policy_doc(rules, "deny")).unwrap();
+    let decision = evaluate(Some(&policy), None, &shell_call(&[hit.as_str()]), AT);
+    assert_eq!(field(&decision, "decision"), &s("allow"));
+}
+
+#[cfg(unix)]
+#[test]
+fn an_inline_option_value_keeps_its_os_bytes() {
+    use std::os::unix::ffi::OsStringExt;
+    let dir = temp_dir("inline-os-bytes");
+    let policy = policy_doc(
+        vec![plain_rule(
+            "allow-ls",
+            "shell",
+            "allow",
+            Value::obj(vec![("argv0", matcher("exact", "ls"))]),
+        )],
+        "deny",
+    );
+    let policy_path = write_json(&dir.join("policy.json"), &policy);
+    let call_path = write_json(&dir.join("call.json"), &shell_call(&["ls"]));
+    let mut log_name = dir.join("audit").into_os_string().into_vec();
+    log_name.extend_from_slice(&[0xFF, b'.', b'l', b'o', b'g']);
+    let log_os = std::ffi::OsString::from_vec(log_name);
+    let log_path = PathBuf::from(&log_os);
+    let mut policy_arg = std::ffi::OsString::from("--policy=");
+    policy_arg.push(&policy_path);
+    let mut log_arg = std::ffi::OsString::from("--log=");
+    log_arg.push(&log_os);
+    let output = Command::new(env!("CARGO_BIN_EXE_portcullis"))
+        .arg("check")
+        .arg(policy_arg)
+        .arg(log_arg)
+        .arg(&call_path)
+        .current_dir(root())
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0));
+    assert!(log_path.exists());
+    assert_eq!(read_log(&log_path).unwrap().len(), 1);
+}

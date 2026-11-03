@@ -1499,36 +1499,80 @@ pub fn normpath(path: &str) -> String {
 /// language is a star for any run of characters, a question mark
 /// for exactly one character, and a bracket class holding single
 /// characters and ranges, negated by a leading exclamation mark.
-/// A backslash is an ordinary character.
+/// A backslash is an ordinary character. A pattern and text
+/// state that has already failed is remembered, so the work a
+/// match can do is bounded by the pattern length times the text
+/// length and a many starred pattern against a long nearly
+/// matching token still answers at once.
 fn glob_match(pattern: &[char], text: &[char]) -> bool {
-    if pattern.is_empty() {
-        return text.is_empty();
+    let mut failed: HashSet<(usize, usize)> = HashSet::new();
+    glob_match_at(pattern, 0, text, 0, &mut failed)
+}
+
+fn glob_match_at(
+    pattern: &[char],
+    pattern_at: usize,
+    text: &[char],
+    text_at: usize,
+    failed: &mut HashSet<(usize, usize)>,
+) -> bool {
+    if failed.contains(&(pattern_at, text_at)) {
+        return false;
     }
-    match pattern[0] {
+    let matched = glob_match_step(pattern, pattern_at, text, text_at, failed);
+    if !matched {
+        failed.insert((pattern_at, text_at));
+    }
+    matched
+}
+
+fn glob_match_step(
+    pattern: &[char],
+    pattern_at: usize,
+    text: &[char],
+    text_at: usize,
+    failed: &mut HashSet<(usize, usize)>,
+) -> bool {
+    if pattern_at == pattern.len() {
+        return text_at == text.len();
+    }
+    match pattern[pattern_at] {
         '*' => {
-            for skip in 0..=text.len() {
-                if glob_match(&pattern[1..], &text[skip..]) {
+            for skip in text_at..=text.len() {
+                if glob_match_at(pattern, pattern_at + 1, text, skip, failed) {
                     return true;
                 }
             }
             false
         }
-        '?' => !text.is_empty() && glob_match(&pattern[1..], &text[1..]),
-        '[' => match parse_class(pattern) {
+        '?' => {
+            text_at < text.len()
+                && glob_match_at(pattern, pattern_at + 1, text, text_at + 1, failed)
+        }
+        '[' => match parse_class(&pattern[pattern_at..]) {
             Some((negated, items, rest)) => {
-                if text.is_empty() {
+                if text_at >= text.len() {
                     return false;
                 }
-                let c = text[0];
+                let c = text[text_at];
                 let inside = items.iter().any(|item| match item {
                     ClassItem::Single(member) => *member == c,
                     ClassItem::Range(lo, hi) => *lo <= c && c <= *hi,
                 });
-                (inside != negated) && glob_match(rest, &text[1..])
+                let rest_at = pattern_at + (pattern[pattern_at..].len() - rest.len());
+                (inside != negated) && glob_match_at(pattern, rest_at, text, text_at + 1, failed)
             }
-            None => !text.is_empty() && text[0] == '[' && glob_match(&pattern[1..], &text[1..]),
+            None => {
+                text_at < text.len()
+                    && text[text_at] == '['
+                    && glob_match_at(pattern, pattern_at + 1, text, text_at + 1, failed)
+            }
         },
-        first => !text.is_empty() && text[0] == first && glob_match(&pattern[1..], &text[1..]),
+        first => {
+            text_at < text.len()
+                && text[text_at] == first
+                && glob_match_at(pattern, pattern_at + 1, text, text_at + 1, failed)
+        }
     }
 }
 
@@ -1990,6 +2034,7 @@ fn validate_decision_record(
         "rule" => {
             if source_keys != HashSet::from(["type", "rule"])
                 || !is_text(source.get("rule").unwrap())
+                || source.get("rule").unwrap().as_str() == Some("")
             {
                 return Err(corruption(format!(
                     "{what} carries a rule source of no use"
@@ -2033,7 +2078,7 @@ fn validate_decision_record(
             }
         }
         "policy error" => {
-            if decision_value.as_str() != Some("deny") {
+            if decision_value.as_str() != Some("deny") || *reason != Value::Null {
                 return Err(corruption(format!(
                     "{what} carries fields that disagree with a policy error source"
                 )));
@@ -2065,6 +2110,11 @@ fn validate_decision_record(
         if validate_call(rewritten).is_err() {
             return Err(corruption(format!(
                 "{what} carries a rewritten call that fails call validation"
+            )));
+        }
+        if is_interpreter_call(rewritten) && !interpreter {
+            return Err(corruption(format!(
+                "{what} carries an interpreter flag that disagrees with the rewritten call"
             )));
         }
     } else if *rewritten != Value::Null {

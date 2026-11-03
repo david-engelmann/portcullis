@@ -207,8 +207,20 @@ fn ci_carries_the_fleet_credential_hygiene() {
     // to a full commit SHA rather than a moving branch name.
     assert!(text.contains("permissions:"));
     assert!(text.contains("contents: read"));
-    assert!(text
+    // The setting is read inside the checkout step alone, so
+    // the same line standing under another step cannot stand
+    // in for the checkout leaving no credential behind.
+    let checkout_at = text
         .lines()
+        .position(|line| line.contains("actions/checkout"))
+        .expect("the workflow carries no checkout step");
+    let checkout_block: Vec<&str> = text
+        .lines()
+        .skip(checkout_at + 1)
+        .take_while(|line| line.trim().is_empty() || !line.trim_start().starts_with("- "))
+        .collect();
+    assert!(checkout_block
+        .iter()
         .any(|line| line.trim() == "persist-credentials: false"));
     assert!(!text.contains("write-all"));
     assert!(!text.contains("contents: write"));

@@ -29,11 +29,15 @@ fn fail(message: &str) {
     eprintln!("error: {message}");
 }
 
-fn print_line(text: &str) {
+/// Print one line on stdout and report a failed write to the
+/// caller, which turns it into a caller error exit, because a
+/// decision that could not be printed was not delivered even
+/// when it was appended.
+fn print_line(text: &str) -> std::io::Result<()> {
     use std::io::Write;
     let mut stdout = std::io::stdout().lock();
-    let _ = writeln!(stdout, "{text}");
-    let _ = stdout.flush();
+    writeln!(stdout, "{text}")?;
+    stdout.flush()
 }
 
 fn arg_error(usage: &str, detail: &str) -> i32 {
@@ -43,11 +47,19 @@ fn arg_error(usage: &str, detail: &str) -> i32 {
 }
 
 fn now_iso() -> String {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
-    let secs = now.as_secs() as i64;
-    let micros = now.subsec_micros();
+    // A clock reading before the epoch formats as the negative
+    // offset it is, as the datetime original does, rather than
+    // collapsing onto the epoch.
+    let (secs, micros) = match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(now) => (now.as_secs() as i64, now.subsec_micros()),
+        Err(error) => {
+            let total_micros = (error.duration().as_micros() as i128).saturating_neg();
+            (
+                total_micros.div_euclid(1_000_000) as i64,
+                total_micros.rem_euclid(1_000_000) as u32,
+            )
+        }
+    };
     let days = secs.div_euclid(86_400);
     let day_secs = secs.rem_euclid(86_400);
     let (year, month, day) = civil_from_days(days);
@@ -191,7 +203,10 @@ fn check(policy_path: PathBuf, log_path: PathBuf, call_path: Option<PathBuf>) ->
         return 2;
     }
     let line = String::from_utf8(canonical(&decision)).unwrap();
-    print_line(&line);
+    if print_line(&line).is_err() {
+        fail("the decision could not be printed");
+        return 2;
+    }
     match decision.get("decision").and_then(|v| v.as_str()) {
         Some("allow") | Some("rewrite") => 0,
         _ => 1,
@@ -203,7 +218,10 @@ fn log(log_path: PathBuf) -> i32 {
         Ok(records) => {
             for record in &records {
                 let line = String::from_utf8(canonical(record)).unwrap();
-                print_line(&line);
+                if print_line(&line).is_err() {
+                    fail("the audit log could not be printed");
+                    return 2;
+                }
             }
             0
         }
@@ -224,29 +242,50 @@ struct ParsedArgs {
     call: Option<PathBuf>,
 }
 
-/// Match one long option token against the known options of a
+/// Split one argument token at its first equals sign, keeping
+/// the inline value as the operating system string it arrived
+/// as, so a value holding bytes that are not text survives as a
+/// path exactly as a value in its own argument does.
+#[cfg(unix)]
+fn split_inline(token: &OsString) -> (String, Option<OsString>) {
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+    let bytes = token.as_bytes();
+    match bytes.iter().position(|byte| *byte == b'=') {
+        Some(at) => (
+            String::from_utf8_lossy(&bytes[..at]).into_owned(),
+            Some(OsString::from_vec(bytes[at + 1..].to_vec())),
+        ),
+        None => (token.to_string_lossy().into_owned(), None),
+    }
+}
+
+#[cfg(not(unix))]
+fn split_inline(token: &OsString) -> (String, Option<OsString>) {
+    let text = token.to_string_lossy().into_owned();
+    match text.split_once('=') {
+        Some((name, value)) => (name.to_string(), Some(OsString::from(value))),
+        None => (text, None),
+    }
+}
+
+/// Match one long option name against the known options of a
 /// subcommand, accepting an unambiguous prefix as the Python
-/// parser accepts it, and return the option name and any value
-/// the token carries past an equals sign.
+/// parser accepts it.
 fn match_long_option<'a>(
-    token: &str,
+    name_token: &str,
+    error_token: &str,
     known: &[&'a str],
-) -> Result<(&'a str, Option<String>), String> {
-    let body = &token[2..];
-    let (name, inline) = match body.split_once('=') {
-        Some((name, value)) => (name, Some(value.to_string())),
-        None => (body, None),
-    };
-    let full = format!("--{name}");
+) -> Result<&'a str, String> {
+    let full = name_token;
     let matches: Vec<&str> = known
         .iter()
-        .filter(|option| option.starts_with(&full))
+        .filter(|option| option.starts_with(full))
         .copied()
         .collect();
     match matches.len() {
-        1 => Ok((matches[0], inline)),
-        0 => Err(format!("unrecognized arguments: {token}")),
-        _ => Err(format!("ambiguous option: {token}")),
+        1 => Ok(matches[0]),
+        0 => Err(format!("unrecognized arguments: {error_token}")),
+        _ => Err(format!("ambiguous option: {error_token}")),
     }
 }
 
@@ -277,16 +316,17 @@ fn parse_subcommand(command: &str, args: &[OsString]) -> Result<ParsedArgs, (Str
             continue;
         }
         if !positional_only && (token_text == "-h" || token_text == "--help") {
-            print_line(&format!("{usage}\n"));
+            let _ = print_line(&format!("{usage}\n"));
             return Err((String::new(), 0));
         }
         if !positional_only && token_text.starts_with("--") {
-            let (option, inline) = match match_long_option(&token_text, known) {
-                Ok(pair) => pair,
+            let (name_token, inline) = split_inline(token);
+            let option = match match_long_option(&name_token, &token_text, known) {
+                Ok(option) => option,
                 Err(detail) => return Err((detail, 2)),
             };
             if option == "--help" {
-                print_line(&format!("{usage}\n"));
+                let _ = print_line(&format!("{usage}\n"));
                 return Err((String::new(), 0));
             }
             let value = match inline {
@@ -344,7 +384,7 @@ fn run() -> i32 {
         None => return arg_error(MAIN_USAGE, "the following arguments are required: command"),
     };
     if first == "-h" || first == "--help" {
-        print_line(MAIN_USAGE);
+        let _ = print_line(MAIN_USAGE);
         return 0;
     }
     match first.as_str() {
