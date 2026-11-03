@@ -2135,10 +2135,11 @@ fn a_rewrite_record_whose_interpreter_flag_denies_its_rewritten_call_is_corrupti
 }
 
 #[test]
-fn a_many_starred_glob_against_a_long_token_answers_at_once() {
-    // The remembered failure states bound the match work by
-    // the pattern length times the text length. Without them
-    // this pair retries every split at every star.
+fn a_many_starred_glob_against_a_long_token_answers() {
+    // The scan backtracks through the last star alone and the
+    // position that star has consumed up to only advances, so
+    // this pair is answered by one walk of the pattern and the
+    // text, not by a retry of every split at every star.
     let rules = vec![plain_rule(
         "many-stars",
         "shell",
@@ -2152,6 +2153,68 @@ fn a_many_starred_glob_against_a_long_token_answers_at_once() {
     let policy = load_policy(&policy_doc(rules, "deny")).unwrap();
     let decision = evaluate(Some(&policy), None, &shell_call(&[hit.as_str()]), AT);
     assert_eq!(field(&decision, "decision"), &s("allow"));
+}
+
+#[test]
+fn a_glob_of_fifty_thousand_literal_characters_still_answers() {
+    // The scan is one forward pass when the pattern holds no
+    // star, so a literal pattern this long answers like a short
+    // one. The recursive matcher before the repair recursed
+    // once per matched character, and this pair overflowed its
+    // stack and aborted the process without an answer.
+    let pattern = "a".repeat(50_000);
+    let rules = vec![plain_rule(
+        "long-literal",
+        "shell",
+        "allow",
+        Value::obj(vec![("argv0", matcher("glob", pattern.as_str()))]),
+    )];
+    let decision = decide(&shell_call(&[pattern.as_str()]), rules.clone(), "deny");
+    assert_eq!(field(&decision, "decision"), &s("allow"));
+    let near_miss = format!("{}b", "a".repeat(49_999));
+    let decision = decide(&shell_call(&[near_miss.as_str()]), rules, "deny");
+    assert_eq!(field(&decision, "decision"), &s("deny"));
+}
+
+#[test]
+fn ten_stars_against_five_thousand_characters_answer_within_ten_seconds() {
+    // The ten second bound is generous on purpose and is the
+    // claim this pin makes. The scan this pins answers this
+    // pair in well under a second in the debug profile the
+    // gate builds, while the memoized recursive matcher before
+    // the repair did not answer it in that profile within two
+    // minutes, because each of its star states scanned every
+    // remaining text position.
+    let rules = vec![plain_rule(
+        "ten-stars",
+        "shell",
+        "allow",
+        Value::obj(vec![("argv0", matcher("glob", "**********x"))]),
+    )];
+    let token = "a".repeat(5_000);
+    let started = std::time::Instant::now();
+    let decision = decide(&shell_call(&[token.as_str()]), rules, "deny");
+    assert_eq!(field(&decision, "decision"), &s("deny"));
+    assert!(started.elapsed() < std::time::Duration::from_secs(10));
+}
+
+#[test]
+fn twenty_five_starred_pairs_against_five_thousand_characters_answer_within_ten_seconds() {
+    // The same bound and the same reasoning as the ten star pin
+    // above, on the alternating shape whose stars cannot
+    // collapse into one star atom.
+    let pattern = format!("{}b", "*a".repeat(25));
+    let rules = vec![plain_rule(
+        "starred-pairs",
+        "shell",
+        "allow",
+        Value::obj(vec![("argv0", matcher("glob", pattern.as_str()))]),
+    )];
+    let token = "a".repeat(5_000);
+    let started = std::time::Instant::now();
+    let decision = decide(&shell_call(&[token.as_str()]), rules, "deny");
+    assert_eq!(field(&decision, "decision"), &s("deny"));
+    assert!(started.elapsed() < std::time::Duration::from_secs(10));
 }
 
 #[cfg(unix)]
