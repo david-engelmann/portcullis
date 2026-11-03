@@ -22,6 +22,27 @@ jobs:
         run: cargo test
       - name: Run the codepoint scan
         run: cargo run --bin codepoint_scan
+  python-binding:
+    name: python binding smoke
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: stable
+      - name: Build the binding and run the smoke suite
+        run: |
+          python -m venv .venv-binding
+          .venv-binding/bin/python -m pip install maturin==1.16.0 pytest==9.2.0
+          .venv-binding/bin/maturin develop --manifest-path bindings/Cargo.toml
+          .venv-binding/bin/python -m pytest tests/test_binding_smoke.py
       - name: Check the formatting
         run: cargo fmt --check
       - name: Run the linter
