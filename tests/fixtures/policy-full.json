@@ -1,0 +1,70 @@
+{
+  "format": "portcullis-policy/1",
+  "default": "deny",
+  "rules": [
+    {
+      "id": "deny-rm",
+      "kind": "shell",
+      "action": "deny",
+      "reason": "removal is not run directly",
+      "match": {
+        "argv0": {
+          "exact": "rm"
+        }
+      }
+    },
+    {
+      "id": "allow-ls",
+      "kind": "shell",
+      "action": "allow",
+      "reason": "listing is fine",
+      "match": {
+        "argv0": {
+          "exact": "ls"
+        }
+      }
+    },
+    {
+      "id": "deny-secret",
+      "kind": "file",
+      "action": "deny",
+      "reason": "the secret file is never read",
+      "match": {
+        "path": {
+          "exact": "secret.txt"
+        }
+      }
+    },
+    {
+      "id": "stage-writes",
+      "kind": "file",
+      "action": "rewrite",
+      "reason": "writes land in staging",
+      "match": {
+        "operation": {
+          "exact": "write"
+        },
+        "path": {
+          "prefix": "/work/out/"
+        }
+      },
+      "substitute": {
+        "path": "/work/staging/out.txt"
+      }
+    },
+    {
+      "id": "allow-https-api",
+      "kind": "network",
+      "action": "allow",
+      "reason": "the api over tls is fine",
+      "match": {
+        "host": {
+          "exact": "api.example.test"
+        },
+        "port": {
+          "exact": 443
+        }
+      }
+    }
+  ]
+}

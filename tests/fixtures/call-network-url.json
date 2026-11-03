@@ -1,0 +1,6 @@
+{
+  "format": "portcullis-call/1",
+  "kind": "network",
+  "method": "GET",
+  "url": "https://api.example.test/items"
+}

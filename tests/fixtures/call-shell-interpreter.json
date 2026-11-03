@@ -1,0 +1,9 @@
+{
+  "format": "portcullis-call/1",
+  "kind": "shell",
+  "argv": [
+    "/bin/sh",
+    "-c",
+    "ls"
+  ]
+}

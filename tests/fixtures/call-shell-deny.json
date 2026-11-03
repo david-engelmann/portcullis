@@ -1,0 +1,8 @@
+{
+  "format": "portcullis-call/1",
+  "kind": "shell",
+  "argv": [
+    "rm",
+    "x"
+  ]
+}

@@ -1,0 +1,22 @@
+[package]
+name = "portcullis"
+version = "0.1.0"
+edition = "2021"
+description = "A local tool call gate that decides whether a proposed tool call may proceed"
+license = "MIT"
+
+[lib]
+name = "portcullis"
+path = "src/lib.rs"
+
+[[bin]]
+name = "portcullis"
+path = "src/bin/portcullis.rs"
+
+[[bin]]
+name = "codepoint_scan"
+path = "src/bin/codepoint_scan.rs"
+
+[dependencies]
+fs2 = "0.4"
+sha2 = "0.10"

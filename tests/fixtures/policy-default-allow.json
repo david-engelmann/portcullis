@@ -1,0 +1,17 @@
+{
+  "format": "portcullis-policy/1",
+  "default": "allow",
+  "rules": [
+    {
+      "id": "deny-delete",
+      "kind": "file",
+      "action": "deny",
+      "reason": "deletion is never allowed",
+      "match": {
+        "operation": {
+          "exact": "delete"
+        }
+      }
+    }
+  ]
+}

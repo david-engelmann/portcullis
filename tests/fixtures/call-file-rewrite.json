@@ -1,0 +1,6 @@
+{
+  "format": "portcullis-call/1",
+  "kind": "file",
+  "operation": "write",
+  "path": "/work/out/report.txt"
+}

@@ -1,0 +1,13 @@
+{
+  "at": "2026-11-02T10:00:00+00:00",
+  "call_digest": "sha256:ce98b47bff30d29cc1762c22c74c344872b7f6c7d34e6bb983c8075fea072549",
+  "decision": "allow",
+  "format": "portcullis-decision/1",
+  "interpreter": false,
+  "reason": "the api over tls is fine",
+  "rewritten_call": null,
+  "source": {
+    "rule": "allow-https-api",
+    "type": "rule"
+  }
+}

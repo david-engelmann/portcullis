@@ -1,0 +1,6 @@
+{
+  "format": "portcullis-call/1",
+  "kind": "file",
+  "operation": "read",
+  "path": "a/../secret.txt"
+}
