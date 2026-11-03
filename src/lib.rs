@@ -1499,81 +1499,172 @@ pub fn normpath(path: &str) -> String {
 /// language is a star for any run of characters, a question mark
 /// for exactly one character, and a bracket class holding single
 /// characters and ranges, negated by a leading exclamation mark.
-/// A backslash is an ordinary character. A pattern and text
-/// state that has already failed is remembered, so the work a
-/// match can do is bounded by the pattern length times the text
-/// length and a many starred pattern against a long nearly
-/// matching token still answers at once.
+/// A backslash is an ordinary character.
+///
+/// The match is a single scan over the pattern atoms and the
+/// text, with backtracking through the last star alone. When
+/// the scan stalls, the last star takes one more character and
+/// the scan resumes just past it, and the position that star
+/// has consumed up to only ever advances, so no split of the
+/// text at a star is ever retried from an earlier split. A
+/// bracket class test costs a binary search over the ranges of
+/// that class. The work the match can do is bounded by the
+/// pattern length times the text length in the worst
+/// arrangement, and the scan is one forward pass, with no
+/// backtracking at all, when the pattern holds no star, so
+/// neither a long literal pattern nor a many starred pattern
+/// against a long text grows the stack or stalls the scan.
 fn glob_match(pattern: &[char], text: &[char]) -> bool {
-    let mut failed: HashSet<(usize, usize)> = HashSet::new();
-    glob_match_at(pattern, 0, text, 0, &mut failed)
-}
-
-fn glob_match_at(
-    pattern: &[char],
-    pattern_at: usize,
-    text: &[char],
-    text_at: usize,
-    failed: &mut HashSet<(usize, usize)>,
-) -> bool {
-    if failed.contains(&(pattern_at, text_at)) {
-        return false;
-    }
-    let matched = glob_match_step(pattern, pattern_at, text, text_at, failed);
-    if !matched {
-        failed.insert((pattern_at, text_at));
-    }
-    matched
-}
-
-fn glob_match_step(
-    pattern: &[char],
-    pattern_at: usize,
-    text: &[char],
-    text_at: usize,
-    failed: &mut HashSet<(usize, usize)>,
-) -> bool {
-    if pattern_at == pattern.len() {
-        return text_at == text.len();
-    }
-    match pattern[pattern_at] {
-        '*' => {
-            for skip in text_at..=text.len() {
-                if glob_match_at(pattern, pattern_at + 1, text, skip, failed) {
-                    return true;
+    let atoms = glob_atoms(pattern);
+    let (mut atom_at, mut text_at) = (0, 0);
+    // The last star atom the scan passed, and the text position
+    // that star has consumed up to. A stall hands that star one
+    // more character and resumes the scan just past it.
+    let mut last_star: Option<(usize, usize)> = None;
+    while text_at < text.len() {
+        if atom_at < atoms.len() {
+            match &atoms[atom_at] {
+                GlobAtom::Star => {
+                    last_star = Some((atom_at, text_at));
+                    atom_at += 1;
+                    continue;
+                }
+                atom => {
+                    if glob_atom_matches(atom, text[text_at]) {
+                        atom_at += 1;
+                        text_at += 1;
+                        continue;
+                    }
                 }
             }
-            false
         }
-        '?' => {
-            text_at < text.len()
-                && glob_match_at(pattern, pattern_at + 1, text, text_at + 1, failed)
-        }
-        '[' => match parse_class(&pattern[pattern_at..]) {
-            Some((negated, items, rest)) => {
-                if text_at >= text.len() {
-                    return false;
-                }
-                let c = text[text_at];
-                let inside = items.iter().any(|item| match item {
-                    ClassItem::Single(member) => *member == c,
-                    ClassItem::Range(lo, hi) => *lo <= c && c <= *hi,
-                });
-                let rest_at = pattern_at + (pattern[pattern_at..].len() - rest.len());
-                (inside != negated) && glob_match_at(pattern, rest_at, text, text_at + 1, failed)
+        match last_star {
+            Some((star_at, consumed)) => {
+                let consumed = consumed + 1;
+                last_star = Some((star_at, consumed));
+                atom_at = star_at + 1;
+                text_at = consumed;
             }
-            None => {
-                text_at < text.len()
-                    && text[text_at] == '['
-                    && glob_match_at(pattern, pattern_at + 1, text, text_at + 1, failed)
-            }
-        },
-        first => {
-            text_at < text.len()
-                && text[text_at] == first
-                && glob_match_at(pattern, pattern_at + 1, text, text_at + 1, failed)
+            None => return false,
         }
     }
+    atoms[atom_at..]
+        .iter()
+        .all(|atom| matches!(atom, GlobAtom::Star))
+}
+
+/// Whether one single character atom of a glob pattern admits
+/// a character. A star is not a single character atom and never
+/// reaches this test, the scan handles it on its own.
+fn glob_atom_matches(atom: &GlobAtom, member: char) -> bool {
+    match atom {
+        GlobAtom::Star => false,
+        GlobAtom::Any => true,
+        GlobAtom::Literal(expected) => member == *expected,
+        GlobAtom::Class { negated, ranges } => glob_class_admits(ranges, member) != *negated,
+    }
+}
+
+/// One atom of a glob pattern, a star, a question mark, a
+/// literal character, or a bracket class held as the sorted and
+/// merged ranges it admits, so a membership test is a binary
+/// search and the union the class admits is the union its
+/// members and ranges name.
+enum GlobAtom {
+    Star,
+    Any,
+    Literal(char),
+    Class {
+        negated: bool,
+        ranges: Vec<(char, char)>,
+    },
+}
+
+/// Read a glob pattern into its atoms. A run of stars collapses
+/// into one star atom, because a star already stands for any run
+/// of characters, so the collapse changes no outcome and
+/// shortens the table. A bracket that never closes stands as a
+/// literal character, as the glob translator reads it, and a
+/// bracket standing past the last closing bracket in the
+/// pattern can never close, so it is read as a literal without
+/// a scan of the tail.
+fn glob_atoms(pattern: &[char]) -> Vec<GlobAtom> {
+    let last_close = pattern.iter().rposition(|member| *member == ']');
+    let mut atoms = Vec::new();
+    let mut at = 0;
+    while at < pattern.len() {
+        match pattern[at] {
+            '*' => {
+                if !matches!(atoms.last(), Some(GlobAtom::Star)) {
+                    atoms.push(GlobAtom::Star);
+                }
+                at += 1;
+            }
+            '?' => {
+                atoms.push(GlobAtom::Any);
+                at += 1;
+            }
+            '[' if last_close.is_some_and(|close| at < close) => {
+                match parse_class(&pattern[at..]) {
+                    Some((negated, items, rest)) => {
+                        let consumed = pattern[at..].len() - rest.len();
+                        atoms.push(GlobAtom::Class {
+                            negated,
+                            ranges: glob_class_ranges(&items),
+                        });
+                        at += consumed;
+                    }
+                    None => {
+                        atoms.push(GlobAtom::Literal('['));
+                        at += 1;
+                    }
+                }
+            }
+            first => {
+                atoms.push(GlobAtom::Literal(first));
+                at += 1;
+            }
+        }
+    }
+    atoms
+}
+
+/// Hold the members of a bracket class as sorted and merged
+/// ranges. A range whose ends stand reversed admits no
+/// character and drops out, as the recursive reader before this
+/// evaluation judged it, and merging ranges that overlap or
+/// touch leaves the admitted union exactly as named.
+fn glob_class_ranges(items: &[ClassItem]) -> Vec<(char, char)> {
+    let mut ranges: Vec<(char, char)> = items
+        .iter()
+        .filter_map(|item| match item {
+            ClassItem::Single(member) => Some((*member, *member)),
+            ClassItem::Range(lo, hi) if lo <= hi => Some((*lo, *hi)),
+            ClassItem::Range(..) => None,
+        })
+        .collect();
+    ranges.sort_unstable();
+    let mut merged: Vec<(char, char)> = Vec::with_capacity(ranges.len());
+    for (lo, hi) in ranges {
+        match merged.last_mut() {
+            Some((_, open_hi)) if (lo as u32) <= (*open_hi as u32) + 1 => {
+                if hi > *open_hi {
+                    *open_hi = hi;
+                }
+            }
+            _ => merged.push((lo, hi)),
+        }
+    }
+    merged
+}
+
+/// Whether a sorted and merged range set admits a character,
+/// found by binary search for the last range opening at or
+/// before the character and a check that the character falls
+/// inside it.
+fn glob_class_admits(ranges: &[(char, char)], member: char) -> bool {
+    let opening = ranges.partition_point(|(lo, _)| *lo <= member);
+    opening > 0 && member <= ranges[opening - 1].1
 }
 
 enum ClassItem {
