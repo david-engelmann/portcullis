@@ -7,6 +7,7 @@ venv/
 dist/
 build/
 *.egg-info/
+*.so
 .env
 target/
 .idea/

@@ -197,6 +197,41 @@ fn ci_runs_the_local_gate_commands() {
     assert!(commands.iter().any(|c| c == CLIPPY_COMMAND));
 }
 
+/// The part of the workflow that belongs to the test job,
+/// running from its job key to the next job key at the same
+/// indent, or to the end of the file when no job follows it.
+fn test_job_section(ci_text: &str) -> &str {
+    let start = ci_text
+        .find("\n  test:\n")
+        .map(|at| at + 1)
+        .expect("the workflow carries no test job");
+    let rest = &ci_text[start..];
+    let mut end = rest.len();
+    let mut offset = 0;
+    for (index, line) in rest.lines().enumerate() {
+        if index > 0 && line.starts_with("  ") && !line.starts_with("   ") && line.ends_with(':') {
+            end = offset;
+            break;
+        }
+        offset += line.len() + 1;
+    }
+    &rest[..end]
+}
+
+#[test]
+fn ci_gate_steps_stand_inside_the_test_job() {
+    let text = read(".github/workflows/ci.yml");
+    let section = test_job_section(&text);
+    // The pin on the gate commands finds all four commands
+    // wherever they stand in the file. This pin is stricter.
+    // The formatting step and the linter step must stand
+    // inside the test job itself, under the toolchain that
+    // job pins, and not drift into a later job that floats
+    // on a toolchain of its own.
+    assert!(section.contains(&format!("run: {FMT_COMMAND}")));
+    assert!(section.contains(&format!("run: {CLIPPY_COMMAND}")));
+}
+
 #[test]
 fn ci_carries_the_fleet_credential_hygiene() {
     let text = read(".github/workflows/ci.yml");

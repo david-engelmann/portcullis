@@ -1,0 +1,14 @@
+[package]
+name = "portcullis-bindings"
+version = "0.1.0"
+edition = "2021"
+description = "The thin Python binding over the portcullis crate, carrying no logic of its own"
+license = "MIT"
+
+[lib]
+name = "portcullis"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+portcullis-core = { package = "portcullis", path = ".." }
+pyo3 = { version = "0.30", features = ["extension-module", "abi3-py39"] }
