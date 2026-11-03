@@ -1,0 +1,18 @@
+{
+  "at": "2026-11-02T10:00:00+00:00",
+  "call_digest": "sha256:b862a8cfad0c1eebea3fd8904c455c2dee7d89011f37f61ce0398c22b678e283",
+  "decision": "rewrite",
+  "format": "portcullis-decision/1",
+  "interpreter": false,
+  "reason": "writes land in staging",
+  "rewritten_call": {
+    "format": "portcullis-call/1",
+    "kind": "file",
+    "operation": "write",
+    "path": "/work/staging/out.txt"
+  },
+  "source": {
+    "rule": "stage-writes",
+    "type": "rule"
+  }
+}

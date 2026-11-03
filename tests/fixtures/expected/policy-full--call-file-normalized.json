@@ -1,0 +1,13 @@
+{
+  "at": "2026-11-02T10:00:00+00:00",
+  "call_digest": "sha256:060873910232d82c7c4aac7a95febca3ca76dc2dfb6cc6960ed40635732393c2",
+  "decision": "deny",
+  "format": "portcullis-decision/1",
+  "interpreter": false,
+  "reason": "the secret file is never read",
+  "rewritten_call": null,
+  "source": {
+    "rule": "deny-secret",
+    "type": "rule"
+  }
+}

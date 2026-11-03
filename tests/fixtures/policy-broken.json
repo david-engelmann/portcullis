@@ -1,0 +1,13 @@
+{
+  "format": "portcullis-policy/1",
+  "default": "deny",
+  "rules": [
+    {
+      "id": "empty",
+      "kind": "shell",
+      "action": "allow",
+      "reason": "a reason",
+      "match": {}
+    }
+  ]
+}

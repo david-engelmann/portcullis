@@ -1,0 +1,7 @@
+{
+  "format": "portcullis-call/1",
+  "kind": "network",
+  "method": "POST",
+  "host": "hooks.example.test",
+  "port": 8443
+}

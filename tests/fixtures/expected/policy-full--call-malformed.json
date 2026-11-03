@@ -1,0 +1,12 @@
+{
+  "at": "2026-11-02T10:00:00+00:00",
+  "call_digest": "sha256:4a3142fb0d9c98622b9759b80b24e8eab40e9e800128f00ce31b1673f4c623fa",
+  "decision": "deny",
+  "format": "portcullis-decision/1",
+  "interpreter": false,
+  "reason": null,
+  "rewritten_call": null,
+  "source": {
+    "type": "malformed"
+  }
+}

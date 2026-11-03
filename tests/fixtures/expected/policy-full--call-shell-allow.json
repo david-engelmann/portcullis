@@ -1,0 +1,13 @@
+{
+  "at": "2026-11-02T10:00:00+00:00",
+  "call_digest": "sha256:22423464240d7a30193a40d5d6f065bc72d05cdab2ab0e7e53927c922eb14a63",
+  "decision": "allow",
+  "format": "portcullis-decision/1",
+  "interpreter": false,
+  "reason": "listing is fine",
+  "rewritten_call": null,
+  "source": {
+    "rule": "allow-ls",
+    "type": "rule"
+  }
+}
