@@ -12,7 +12,7 @@ The remote seed was verified on 2026-11-02 against the staged seed and its commi
 
 The contract lives in CONTRACT.md. The full contract landed as the first build act of this repo in Round 1 slice 1, and obligations S1 to S5 stand as its setup record with obligations PC-1 to PC-12 stating the behaviour of the gate. Round 1 slice 1 builds the decision engine. A structured call record and a policy go in, a decision record comes out, and the decision is appended to an audit log. The gate judges shell and file and network calls by rule in the evaluation order the contract fixes, and it fails closed when its policy cannot be loaded. It wires into no harness and executes nothing, and ROADMAP.md stands as it landed ahead of setup and this slice does not change it.
 
-Closed perfection rounds are 1 of 100. A round counts only when a full cycle of work and audit and review and red team and approval has closed, and seeding and setup are not rounds.
+Closed perfection rounds are 2 of 100. A round counts only when a full cycle of work and audit and review and red team and approval has closed, and seeding and setup are not rounds.
 
 The local gate is cargo test plus the codepoint scan run through cargo, run on the exact final head before any push, with the continuous integration workflow running the same commands as a backstop.
 
