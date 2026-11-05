@@ -642,14 +642,15 @@ fn write_hand_log(dir: &Path) -> PathBuf {
 #[test]
 fn the_audit_subcommand_prints_the_library_report_byte_for_byte() {
     let dir = temp_dir("cli-report");
-    let log_path = write_hand_log(&dir);
-    let library = audit_log(&log_path, 2).unwrap();
+    let log_path = dir.join("audit.jsonl");
+    build_mixed_log(&log_path);
+    let library = audit_log(&log_path, 3).unwrap();
     let result = run_cli(&[
         "audit",
         "--log",
         log_path.to_str().unwrap(),
         "--sample",
-        "2",
+        "3",
     ]);
     assert_eq!(result.status, 0, "stderr {}", result.stderr);
     let printed = format!("{}\n", String::from_utf8(canonical(&library)).unwrap());
@@ -723,6 +724,17 @@ fn the_audit_subcommand_refuses_bad_sample_arguments_at_exit_two() {
         "stderr {}",
         zero.stderr
     );
+    for token in ["two", "99999999999999999999999999999999"] {
+        let result = run_cli(&["audit", "--log", log, "--sample", token]);
+        assert_eq!(result.status, 2, "token {token}");
+        assert!(
+            result
+                .stderr
+                .contains(&format!("argument --sample: unusable count value: {token}")),
+            "stderr {}",
+            result.stderr
+        );
+    }
 }
 
 #[test]

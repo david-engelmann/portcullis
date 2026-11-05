@@ -419,7 +419,7 @@ fn parse_subcommand(command: &str, args: &[OsString]) -> Result<ParsedArgs, (Str
                         Ok(size) => parsed.sample = Some(size),
                         Err(_) => {
                             return Err((
-                                format!("argument --sample: invalid positive count value: {text}"),
+                                format!("argument --sample: unusable count value: {text}"),
                                 2,
                             ));
                         }
