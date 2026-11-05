@@ -65,7 +65,10 @@
 
 use std::path::PathBuf;
 
-use portcullis_core::{append_decision, evaluate, load_policy, LogReadError, Value};
+use portcullis_core::{
+    append_decision, evaluate, evaluate_with_transport, load_policy, JudgeTransport, LogReadError,
+    TransportError, Value,
+};
 use pyo3::create_exception;
 use pyo3::exceptions::{PyException, PyTypeError};
 use pyo3::prelude::*;
@@ -358,6 +361,37 @@ fn dict_to_py(py: Python<'_>, value: &Value) -> PyResult<Py<PyDict>> {
     Ok(dict.unbind())
 }
 
+/// A Python callable standing as a judge transport.
+///
+/// The callable receives the request document as one plain
+/// dictionary and answers with the reply body as text. A
+/// callable that raises, or that answers with a value that is
+/// not text, is a transport failure, and the library records
+/// the referral under the transport class.
+struct PyJudgeTransport {
+    callable: Py<PyAny>,
+}
+
+impl JudgeTransport for PyJudgeTransport {
+    fn consult(&self, request: &Value) -> Result<String, TransportError> {
+        Python::attach(|py| {
+            let argument = value_to_py(py, request).map_err(|_| {
+                TransportError("the request document could not cross to the transport".to_string())
+            })?;
+            let result = self
+                .callable
+                .bind(py)
+                .call1((argument,))
+                .map_err(|_| TransportError("the transport callable raised".to_string()))?;
+            result.extract::<String>().map_err(|_| {
+                TransportError(
+                    "the transport callable returned a value that is not text".to_string(),
+                )
+            })
+        })
+    }
+}
+
 /// Judge one call against one policy and record the decision.
 ///
 /// The policy document and the call document cross as Python
@@ -366,15 +400,19 @@ fn dict_to_py(py: Python<'_>, value: &Value) -> PyResult<Py<PyDict>> {
 /// back as a plain dictionary in the portcullis-decision/1
 /// shape, and it stands in the audit log at the given path
 /// before the function returns, appended by the library under
-/// its lock exactly as the command line tool appends it.
+/// its lock exactly as the command line tool appends it. The
+/// optional transport keyword hands the library a callable
+/// judge transport, and a decision the model influenced then
+/// comes back in the portcullis-decision/2 shape.
 #[pyfunction]
-#[pyo3(signature = (policy, call, log, at))]
+#[pyo3(signature = (policy, call, log, at, transport=None))]
 fn check(
     py: Python<'_>,
     policy: &Bound<'_, PyAny>,
     call: &Bound<'_, PyAny>,
     log: PathBuf,
     at: &str,
+    transport: Option<Py<PyAny>>,
 ) -> PyResult<Py<PyDict>> {
     let call_document = to_value(call, 0).map_err(|error| match error {
         ConvertError::Reader(message) => CallerError::new_err(message),
@@ -386,6 +424,31 @@ fn check(
         Err(ConvertError::Type(message)) => return Err(PyTypeError::new_err(message)),
     };
     let at_text = at.to_string();
+    if let Some(callable) = transport {
+        let (policy, detail) = match &policy_document {
+            Some(document) => match load_policy(document) {
+                Ok(policy) => (Some(policy), None),
+                Err(error) => (None, Some(error.0)),
+            },
+            None => (None, policy_detail.clone()),
+        };
+        let wrapper = PyJudgeTransport { callable };
+        let decision = evaluate_with_transport(
+            policy.as_ref(),
+            detail.as_deref(),
+            &call_document,
+            &at_text,
+            Some(&wrapper),
+        );
+        append_decision(&log, &decision).map_err(|error| {
+            LogAppendError::new_err(format!(
+                "the decision could not be appended to the audit log at {}, {}",
+                log.display(),
+                error.0
+            ))
+        })?;
+        return dict_to_py(py, &decision);
+    }
     let outcome = py.detach(|| {
         let (policy, detail) = match &policy_document {
             Some(document) => match load_policy(document) {

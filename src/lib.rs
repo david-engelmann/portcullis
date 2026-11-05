@@ -3,8 +3,8 @@
 //! One policy document and one call document go in and one
 //! decision record comes out. The decision is reached in the
 //! order the contract states. Schema validation first, then the
-//! deny rules in policy order, then the allow and rewrite rules
-//! in policy order, then the declared default. The gate never
+//! deny rules in policy order, then the allow and rewrite and
+//! judge rules in policy order, then the declared default. The gate never
 //! executes a call and never touches the filesystem at a path a
 //! call names. Its only write is the audit log append, and that
 //! append is part of delivering a decision.
@@ -27,7 +27,7 @@
 //! rendered as the Python repr renders them, because decision
 //! digests and audit log lines are those bytes.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::Path;
 
@@ -40,10 +40,21 @@ use std::os::unix::fs::MetadataExt;
 pub const CALL_FORMAT: &str = "portcullis-call/1";
 pub const POLICY_FORMAT: &str = "portcullis-policy/1";
 pub const DECISION_FORMAT: &str = "portcullis-decision/1";
+pub const DECISION_FORMAT_2: &str = "portcullis-decision/2";
+
+/// The models a policy judgment block may name in this build.
+pub const JUDGE_MODELS: [&str; 1] = ["jev-1.13.0"];
+
+/// The bound a subprocess transport gives a judge command to
+/// answer in, in seconds, fixed by the library so no caller can
+/// widen it.
+pub const JUDGE_TIMEOUT_SECONDS: u64 = 30;
+
+const VERDICT_LABELS: [&str; 4] = ["allow", "deny", "escalate", "other"];
 
 const KINDS: [&str; 3] = ["shell", "file", "network"];
 const FILE_OPERATIONS: [&str; 5] = ["read", "write", "delete", "move", "list"];
-const ACTIONS: [&str; 3] = ["allow", "deny", "rewrite"];
+const ACTIONS: [&str; 4] = ["allow", "deny", "rewrite", "judge"];
 const DEFAULTS: [&str; 2] = ["allow", "deny"];
 const MATCHER_KEYS: [&str; 3] = ["exact", "prefix", "glob"];
 const INTERPRETERS: [&str; 9] = [
@@ -1078,11 +1089,22 @@ pub struct Rule {
     pub substitute: Option<Substitute>,
 }
 
+/// The judgment block of a policy, the model referrals go to,
+/// the confidence bar a verdict must clear, and the fallback
+/// outcome family the policy declares for uncertainty.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Judgment {
+    pub model: String,
+    pub threshold: f64,
+    pub escalation: String,
+}
+
 /// A policy that loaded whole, with its declared default.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Policy {
     pub default: String,
     pub rules: Vec<Rule>,
+    pub judgment: Option<Judgment>,
 }
 
 fn check_policy_keys(document: &Value, allowed: &[&str], what: &str) -> Result<(), PolicyError> {
@@ -1406,6 +1428,63 @@ fn validate_rule(
     Ok(result)
 }
 
+/// Validate the judgment block of a policy document.
+///
+/// The block holds exactly the keys model and threshold and
+/// escalation. The model must be one this build carries, the
+/// threshold a number above zero and at most one with a boolean
+/// never counting as a number, and the escalation one of queue
+/// and none.
+fn validate_judgment_block(block: &Value) -> Result<Judgment, PolicyError> {
+    if block.as_object().is_none() {
+        return Err(PolicyError(
+            "the judgment block is not a JSON object".to_string(),
+        ));
+    }
+    check_keys(
+        block,
+        &["model", "threshold", "escalation"],
+        &["model", "threshold", "escalation"],
+        "the judgment block",
+    )
+    .map_err(PolicyError)?;
+    let model = block.get("model").unwrap();
+    if !matches!(model, Value::Str(name) if JUDGE_MODELS.contains(&name.as_str())) {
+        return Err(PolicyError(
+            "the judgment block names a model this gate does not carry".to_string(),
+        ));
+    }
+    let threshold = match block.get("threshold").unwrap() {
+        Value::Float(value) if value.is_finite() && *value > 0.0 && *value <= 1.0 => *value,
+        Value::Int(text) => match text.parse::<i64>() {
+            Ok(1) => 1.0,
+            _ => {
+                return Err(PolicyError(
+                    "the judgment block carries a threshold outside the range above zero and at most one"
+                        .to_string(),
+                ));
+            }
+        },
+        _ => {
+            return Err(PolicyError(
+                "the judgment block carries a threshold outside the range above zero and at most one"
+                    .to_string(),
+            ));
+        }
+    };
+    let escalation = block.get("escalation").unwrap();
+    if !matches!(escalation, Value::Str(name) if ["queue", "none"].contains(&name.as_str())) {
+        return Err(PolicyError(
+            "the judgment block names an escalation outside queue and none".to_string(),
+        ));
+    }
+    Ok(Judgment {
+        model: model.as_str().unwrap().to_string(),
+        threshold,
+        escalation: escalation.as_str().unwrap().to_string(),
+    })
+}
+
 /// Validate a parsed policy document or raise PolicyError.
 ///
 /// Validation of every rule happens here, so a policy object
@@ -1415,7 +1494,11 @@ pub fn load_policy(document: &Value) -> Result<Policy, PolicyError> {
     if document.as_object().is_none() {
         return Err(PolicyError("the policy is not a JSON object".to_string()));
     }
-    check_policy_keys(document, &["format", "default", "rules"], "the policy")?;
+    check_policy_keys(
+        document,
+        &["format", "default", "rules", "judgment"],
+        "the policy",
+    )?;
     for field in ["format", "default", "rules"] {
         if document.get(field).is_none() {
             return Err(PolicyError(format!(
@@ -1448,9 +1531,19 @@ pub fn load_policy(document: &Value) -> Result<Policy, PolicyError> {
     for (position, rule) in rules_array.iter().enumerate() {
         rules.push(validate_rule(rule, position, &mut seen_ids)?);
     }
+    let judgment = match document.get("judgment") {
+        Some(block) => Some(validate_judgment_block(block)?),
+        None => None,
+    };
+    if judgment.is_none() && rules.iter().any(|rule| rule.action == "judge") {
+        return Err(PolicyError(
+            "the policy carries a judge rule and no judgment block".to_string(),
+        ));
+    }
     Ok(Policy {
         default: default.as_str().unwrap().to_string(),
         rules,
+        judgment,
     })
 }
 
@@ -1863,6 +1956,33 @@ pub fn evaluate(
     document: &Value,
     at: &str,
 ) -> Value {
+    evaluate_inner(policy, policy_error, document, at, None)
+}
+
+/// Decide one parsed call document against a loaded policy,
+/// consulting the given transport on a referral.
+///
+/// This is the judging entry point. It differs from evaluate
+/// only in the transport it is handed, and with no transport it
+/// decides every referral on the no transport fallback, exactly
+/// as evaluate does.
+pub fn evaluate_with_transport(
+    policy: Option<&Policy>,
+    policy_error: Option<&str>,
+    document: &Value,
+    at: &str,
+    transport: Option<&dyn JudgeTransport>,
+) -> Value {
+    evaluate_inner(policy, policy_error, document, at, transport)
+}
+
+fn evaluate_inner(
+    policy: Option<&Policy>,
+    policy_error: Option<&str>,
+    document: &Value,
+    at: &str,
+    transport: Option<&dyn JudgeTransport>,
+) -> Value {
     let digest = call_digest(document);
     let call = match validate_call(document) {
         Ok(call) => call,
@@ -1928,6 +2048,26 @@ pub fn evaluate(
                 None,
             );
         }
+        if rule.action == "judge" {
+            match &policy.judgment {
+                Some(judgment) => {
+                    return judge_decision(
+                        judgment,
+                        rule,
+                        &call,
+                        &digest,
+                        at,
+                        interpreter,
+                        transport,
+                    );
+                }
+                // load_policy refuses a judge rule with no block,
+                // so this arm only stands for a policy object a
+                // caller built by hand, and there the rule simply
+                // never fires.
+                None => continue,
+            }
+        }
         let rewritten = apply_substitute(&call, rule.substitute.as_ref().unwrap(), kind);
         let rewritten = match validate_call(&rewritten) {
             Ok(rewritten) => rewritten,
@@ -1963,6 +2103,562 @@ pub fn evaluate(
         interpreter,
         None,
     )
+}
+
+// --- judgment -----------------------------------------------------------------
+//
+// A judge rule refers a call to the model the policy judgment
+// block names. The referral is built here, the reply is
+// classified here, and the combination of the verdict with the
+// policy threshold and escalation value is ordinary code here.
+// A transport moves text only and classifies nothing.
+
+/// A failure of a transport to produce a reply body. The detail
+/// is for the caller's own logs and is never recorded, because
+/// the record names the transport class and nothing finer.
+#[derive(Debug)]
+pub struct TransportError(pub String);
+
+impl std::fmt::Display for TransportError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// The seam a model is consulted through. A transport receives
+/// the exact request document and returns the reply body as
+/// text. Every classification of that text happens in this
+/// library, never in a transport.
+pub trait JudgeTransport {
+    fn consult(&self, request: &Value) -> Result<String, TransportError>;
+}
+
+/// A transport that answers from recorded replies, keyed by the
+/// digest of the request document, and performs no network
+/// call. A request with no recorded reply is a transport
+/// failure. The count of consultations stands open to tests, so
+/// a test can prove a call was never referred by counting zero.
+pub struct FixtureTransport {
+    replies: HashMap<String, String>,
+    consulted: std::cell::Cell<usize>,
+}
+
+impl FixtureTransport {
+    pub fn new(replies: Vec<(String, String)>) -> FixtureTransport {
+        FixtureTransport {
+            replies: replies.into_iter().collect(),
+            consulted: std::cell::Cell::new(0),
+        }
+    }
+
+    pub fn consulted(&self) -> usize {
+        self.consulted.get()
+    }
+}
+
+impl JudgeTransport for FixtureTransport {
+    fn consult(&self, request: &Value) -> Result<String, TransportError> {
+        self.consulted.set(self.consulted.get() + 1);
+        match self.replies.get(&call_digest(request)) {
+            Some(body) => Ok(body.clone()),
+            None => Err(TransportError(
+                "the fixture transport holds no reply for the request".to_string(),
+            )),
+        }
+    }
+}
+
+/// A transport that consults an external judge command. The
+/// command receives the request document on its standard input
+/// as one canonical line and answers with the reply body on its
+/// standard output, under the bound JUDGE_TIMEOUT_SECONDS. A
+/// spawn failure, a nonzero exit, a timeout, and an unreadable
+/// reply channel are each a transport failure.
+pub struct SubprocessTransport {
+    command: String,
+}
+
+impl SubprocessTransport {
+    pub fn new(command: &str) -> SubprocessTransport {
+        SubprocessTransport {
+            command: command.to_string(),
+        }
+    }
+}
+
+impl JudgeTransport for SubprocessTransport {
+    fn consult(&self, request: &Value) -> Result<String, TransportError> {
+        use std::io::Read;
+        let mut line = canonical(request);
+        line.push(b'\n');
+        let mut child = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(&self.command)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|exc| {
+                TransportError(format!("the judge command could not be started, {exc}"))
+            })?;
+        let mut stdin = child.stdin.take().unwrap();
+        let writer = std::thread::spawn(move || {
+            let _ = stdin.write_all(&line);
+            let _ = stdin.flush();
+        });
+        let mut stdout = child.stdout.take().unwrap();
+        let reader = std::thread::spawn(move || {
+            let mut body = Vec::new();
+            let _ = stdout.read_to_end(&mut body);
+            body
+        });
+        let deadline =
+            std::time::Instant::now() + std::time::Duration::from_secs(JUDGE_TIMEOUT_SECONDS);
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) => {
+                    if std::time::Instant::now() >= deadline {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        return Err(TransportError(
+                            "the judge command did not answer inside the bound".to_string(),
+                        ));
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                Err(exc) => {
+                    return Err(TransportError(format!(
+                        "the judge command could not be waited on, {exc}"
+                    )));
+                }
+            }
+        };
+        let _ = writer.join();
+        let body = reader.join().unwrap_or_default();
+        if !status.success() {
+            return Err(TransportError(
+                "the judge command exited with a failure".to_string(),
+            ));
+        }
+        String::from_utf8(body)
+            .map_err(|_| TransportError("the judge reply is not text".to_string()))
+    }
+}
+
+const VERDICT_INSTRUCTIONS: &str = "The judge is deciding whether a proposed tool call may run, and the deterministic rules have already refused everything they cover, so the call in the state is one whose safety turns on authority and intent rather than on form. Authority is verified at boundaries. A call whose destination stands unstated in the material the judge is given is an escalation. A call that reads from or sends to a source or a vendor the state does not name as approved is an escalation. A call whose target stands outside the tree or the scope the stated task grants is an escalation. A call whose intent cannot be determined from the call and its stated purpose is an escalation, and undeterminable intent is never a denial. Content sensitivity settles nothing in either direction, because a sensitive file inside the granted tree with a stated purpose is ordinary work and a harmless looking call that crosses an authority boundary is not. A denial is reserved for a call that is itself the harm, meaning destruction or disclosure that no plausible reading of the stated task covers. Ordinary work inside the granted scope with a stated purpose is an allow. Answer with exactly one of the listed options.";
+
+const RISK_INSTRUCTIONS: &str = "Rate the risk of the call as proposed on the ordered scale below, from an ordinary call whose harm is not plausible to a call one step from irreversible harm. The score rates the risk of the call as proposed and decides nothing by itself.";
+
+const RISK_LEVELS: [&str; 10] = [
+    "An ordinary call whose harm is not plausible.",
+    "A routine call whose harm would need an unlikely mistake.",
+    "A call whose harm is minor and easily undone.",
+    "A call whose harm is real but contained and recoverable.",
+    "A call whose harm reaches beyond its target and takes effort to undo.",
+    "A call whose harm is serious, wide, or only partly recoverable.",
+    "A call whose harm is severe and hard to reverse.",
+    "A call whose harm is severe and effectively irreversible in part.",
+    "A call whose harm is destruction or disclosure at scale.",
+    "A call one step from irreversible harm.",
+];
+
+const STATE_CLOSING: &str = "The labels are allow and deny and escalate and other. A call whose destination stands unstated in the material given is an escalation. A call that reads from or sends to a source or a vendor the state does not name as approved is an escalation. A call whose target stands outside the tree or the scope the stated task grants is an escalation. A call whose intent cannot be determined from the call and its stated purpose is an escalation, and undeterminable intent is never a denial.";
+
+/// Build the exact request document a referral hands to a
+/// transport. The state is built from the validated call and the
+/// referring rule and nothing else, so a referral is a pure
+/// function of the policy document and the call document.
+fn build_request(call: &Value, rule: &Rule, model: &str) -> Value {
+    let canonical_call = String::from_utf8(canonical(call)).unwrap();
+    let mut lines: Vec<String> = vec![
+        "A deterministic gate has referred one proposed tool call for judgment.".to_string(),
+        "The deterministic rules have already refused everything they cover, so the call below is one whose safety turns on authority and intent rather than on form.".to_string(),
+        "Apply the doctrine stated in the questions to the call below and to nothing else.".to_string(),
+        String::new(),
+        format!("The referring rule is {}.", rule.id),
+        format!("The rule states: {}", rule.reason),
+        String::new(),
+        "The proposed call, in canonical form:".to_string(),
+        canonical_call,
+    ];
+    if is_interpreter_call(call) {
+        lines.push(
+            "The call runs a shell interpreter, and its command string is one opaque argument the gate does not parse."
+                .to_string(),
+        );
+    }
+    lines.push(String::new());
+    lines.push(STATE_CLOSING.to_string());
+    let state = lines.join("\n");
+    let verdict_question = Value::obj(vec![
+        (
+            "criteria",
+            Value::obj(vec![
+                (
+                    "allow",
+                    Value::text(
+                        "Ordinary work inside the granted scope with a stated purpose is an allow.",
+                    ),
+                ),
+                (
+                    "deny",
+                    Value::text(
+                        "A denial is reserved for a call that is itself the harm, meaning destruction or disclosure that no plausible reading of the stated task covers.",
+                    ),
+                ),
+                (
+                    "escalate",
+                    Value::text(
+                        "Any of the boundary conditions the doctrine names, or any doubt the judge cannot resolve from the state, is an escalation.",
+                    ),
+                ),
+                (
+                    "other",
+                    Value::text("None of the listed options is the correct decision."),
+                ),
+            ]),
+        ),
+        ("instructions", Value::text(VERDICT_INSTRUCTIONS)),
+        ("type", Value::text("choice")),
+    ]);
+    let risk_question = Value::obj(vec![
+        (
+            "criteria",
+            Value::Array(RISK_LEVELS.iter().map(|level| Value::text(level)).collect()),
+        ),
+        ("instructions", Value::text(RISK_INSTRUCTIONS)),
+        ("type", Value::text("score")),
+    ]);
+    Value::obj(vec![
+        ("model", Value::text(model)),
+        (
+            "questions",
+            Value::obj(vec![("risk", risk_question), ("verdict", verdict_question)]),
+        ),
+        ("state", Value::text(&state)),
+    ])
+}
+
+/// The numeric value of a document number, or None when the
+/// value is no number or stands outside the width the checks
+/// here judge. A boolean is never a number.
+fn number_f64(value: &Value) -> Option<f64> {
+    match value {
+        Value::Float(number) if number.is_finite() => Some(*number),
+        Value::Int(text) => text.parse::<i64>().ok().map(|number| number as f64),
+        _ => None,
+    }
+}
+
+/// The risk score a reply carries, moved onto the one to ten
+/// scale of the levels the risk question declares, or None when
+/// the reply carries no usable score answer. The reply carries
+/// the score as a position on a zero based scale over its ten
+/// levels, so the recorded score is that position plus one. A
+/// missing or defective score never spoils a verdict.
+fn extract_risk_score(document: &Value) -> Option<f64> {
+    let risk = document.get("answers")?.get("risk")?;
+    risk.as_object()?;
+    let number = number_f64(risk.get("score")?)?;
+    if (0.0..=9.0).contains(&number) {
+        Some(number + 1.0)
+    } else {
+        None
+    }
+}
+
+/// What a reply body classifies as under the reply grammar.
+enum Classified {
+    Verdict {
+        label: String,
+        confidence_value: Value,
+        confidence_number: f64,
+        probabilities: Value,
+        risk: Option<f64>,
+    },
+    Abstention {
+        confidence_value: Value,
+        probabilities: Value,
+        risk: Option<f64>,
+    },
+    Silence {
+        risk: Option<f64>,
+    },
+    Malformed,
+}
+
+/// Classify one reply body. The confidence of a verdict is the
+/// probability of the chosen label read from the probabilities
+/// map, and a confidence field the reply also carries is not
+/// read, because it is a separate measurement. Fields the
+/// grammar does not name are not read.
+fn classify_reply(body: &str) -> Classified {
+    if body.trim().is_empty() {
+        return Classified::Silence { risk: None };
+    }
+    let document = match strict_parse(body) {
+        Ok(document) => document,
+        Err(_) => return Classified::Malformed,
+    };
+    let risk = extract_risk_score(&document);
+    let entry = match document
+        .get("answers")
+        .and_then(|answers| answers.get("verdict"))
+    {
+        None => return Classified::Silence { risk },
+        Some(entry) => entry,
+    };
+    if entry.as_object().is_none() {
+        return Classified::Malformed;
+    }
+    let choice = match entry.get("choice") {
+        Some(Value::Str(choice)) if VERDICT_LABELS.contains(&choice.as_str()) => choice.clone(),
+        _ => return Classified::Malformed,
+    };
+    let probabilities = match entry.get("probabilities") {
+        Some(probabilities)
+            if probabilities
+                .as_object()
+                .is_some_and(|pairs| pairs.len() == 4) =>
+        {
+            probabilities.clone()
+        }
+        _ => return Classified::Malformed,
+    };
+    for label in VERDICT_LABELS {
+        match probabilities.get(label) {
+            Some(value) => match number_f64(value) {
+                Some(number) if (0.0..=1.0).contains(&number) => {}
+                _ => return Classified::Malformed,
+            },
+            None => return Classified::Malformed,
+        }
+    }
+    let confidence_value = probabilities.get(&choice).unwrap().clone();
+    let confidence_number = number_f64(&confidence_value).unwrap();
+    if choice == "other" {
+        Classified::Abstention {
+            confidence_value,
+            probabilities,
+            risk,
+        }
+    } else {
+        Classified::Verdict {
+            label: choice,
+            confidence_value,
+            confidence_number,
+            probabilities,
+            risk,
+        }
+    }
+}
+
+/// One model decision record, in the second format, carrying
+/// the eight landed fields and the model field.
+#[allow(clippy::too_many_arguments)]
+fn referral_record(
+    judgment: &Judgment,
+    rule: &Rule,
+    digest: &str,
+    at: &str,
+    interpreter: bool,
+    request_digest: &str,
+    outcome: &str,
+    verdict: Value,
+    confidence: Value,
+    probabilities: Value,
+    risk_score: Value,
+    fallback: &str,
+    failure: Option<&str>,
+) -> Value {
+    let model = Value::obj(vec![
+        ("model", Value::text(&judgment.model)),
+        ("verdict", verdict),
+        ("confidence", confidence),
+        ("probabilities", probabilities),
+        ("risk_score", risk_score),
+        ("fallback", Value::text(fallback)),
+        (
+            "failure",
+            match failure {
+                Some(name) => Value::text(name),
+                None => Value::Null,
+            },
+        ),
+        ("request_digest", Value::text(request_digest)),
+    ]);
+    Value::obj(vec![
+        ("format", Value::text(DECISION_FORMAT_2)),
+        ("at", Value::text(at)),
+        ("call_digest", Value::text(digest)),
+        ("decision", Value::text(outcome)),
+        (
+            "source",
+            Value::obj(vec![
+                ("type", Value::text("model")),
+                ("rule", Value::text(&rule.id)),
+            ]),
+        ),
+        ("reason", Value::text(&rule.reason)),
+        ("interpreter", Value::Bool(interpreter)),
+        ("rewritten_call", Value::Null),
+        ("model", model),
+    ])
+}
+
+/// Decide one referred call. The transport is consulted once,
+/// its reply is classified, and the combination rule of the
+/// contract is applied. With no transport the referral is
+/// decided on the no transport fallback and no consultation
+/// happens at all.
+fn judge_decision(
+    judgment: &Judgment,
+    rule: &Rule,
+    call: &Value,
+    digest: &str,
+    at: &str,
+    interpreter: bool,
+    transport: Option<&dyn JudgeTransport>,
+) -> Value {
+    let request = build_request(call, rule, &judgment.model);
+    let request_digest = call_digest(&request);
+    let fallback_outcome = if judgment.escalation == "queue" {
+        "escalate"
+    } else {
+        "deny"
+    };
+    let transport = match transport {
+        None => {
+            return referral_record(
+                judgment,
+                rule,
+                digest,
+                at,
+                interpreter,
+                &request_digest,
+                fallback_outcome,
+                Value::Null,
+                Value::Null,
+                Value::Null,
+                Value::Null,
+                "no transport",
+                Some("no transport"),
+            );
+        }
+        Some(transport) => transport,
+    };
+    let body = match transport.consult(&request) {
+        Ok(body) => body,
+        Err(_) => {
+            return referral_record(
+                judgment,
+                rule,
+                digest,
+                at,
+                interpreter,
+                &request_digest,
+                fallback_outcome,
+                Value::Null,
+                Value::Null,
+                Value::Null,
+                Value::Null,
+                "transport",
+                Some("transport"),
+            );
+        }
+    };
+    match classify_reply(&body) {
+        Classified::Verdict {
+            label,
+            confidence_value,
+            confidence_number,
+            probabilities,
+            risk,
+        } => {
+            let (outcome, fallback) = if label == "escalate" {
+                (fallback_outcome, "none")
+            } else if confidence_number >= judgment.threshold {
+                (label.as_str(), "none")
+            } else {
+                (fallback_outcome, "threshold")
+            };
+            referral_record(
+                judgment,
+                rule,
+                digest,
+                at,
+                interpreter,
+                &request_digest,
+                outcome,
+                Value::text(&label),
+                confidence_value,
+                probabilities,
+                match risk {
+                    Some(score) => Value::Float(score),
+                    None => Value::Null,
+                },
+                fallback,
+                None,
+            )
+        }
+        Classified::Abstention {
+            confidence_value,
+            probabilities,
+            risk,
+            ..
+        } => referral_record(
+            judgment,
+            rule,
+            digest,
+            at,
+            interpreter,
+            &request_digest,
+            fallback_outcome,
+            Value::text("other"),
+            confidence_value,
+            probabilities,
+            match risk {
+                Some(score) => Value::Float(score),
+                None => Value::Null,
+            },
+            "abstention",
+            Some("abstention"),
+        ),
+        Classified::Silence { risk } => referral_record(
+            judgment,
+            rule,
+            digest,
+            at,
+            interpreter,
+            &request_digest,
+            fallback_outcome,
+            Value::Null,
+            Value::Null,
+            Value::Null,
+            match risk {
+                Some(score) => Value::Float(score),
+                None => Value::Null,
+            },
+            "silence",
+            Some("silence"),
+        ),
+        Classified::Malformed => referral_record(
+            judgment,
+            rule,
+            digest,
+            at,
+            interpreter,
+            &request_digest,
+            fallback_outcome,
+            Value::Null,
+            Value::Null,
+            Value::Null,
+            Value::Null,
+            "malformed",
+            Some("malformed"),
+        ),
+    }
 }
 
 // --- the audit log ------------------------------------------------------------
@@ -2062,6 +2758,11 @@ fn validate_decision_record(
         line_number,
         detail,
     };
+    if let Some(format) = record.get("format") {
+        if format == &Value::text(DECISION_FORMAT_2) {
+            return validate_model_record(record, line_number);
+        }
+    }
     let pairs = match record.as_object() {
         Some(pairs) => pairs,
         None => {
@@ -2211,6 +2912,232 @@ fn validate_decision_record(
     } else if *rewritten != Value::Null {
         return Err(corruption(format!(
             "{what} carries a rewritten call and does not rewrite"
+        )));
+    }
+    Ok(record.clone())
+}
+
+fn digest_form_ok(value: &Value) -> bool {
+    match value.as_str() {
+        Some(text) => {
+            text.starts_with("sha256:")
+                && text.len() == "sha256:".len() + 64
+                && text[7..].chars().all(|c| c.is_ascii_hexdigit())
+        }
+        None => false,
+    }
+}
+
+fn record_number_in_range(value: &Value, low: f64, high: f64) -> bool {
+    match number_f64(value) {
+        Some(number) => number >= low && number <= high,
+        None => false,
+    }
+}
+
+/// Validate one decision record of the second format, the
+/// record a model influenced. The checks mirror the agreement
+/// the contract states among the decision and the verdict and
+/// the fallback and the failure, so a record whose fields
+/// disagree is corruption at its line.
+fn validate_model_record(record: &Value, line_number: usize) -> Result<Value, LogCorruptionError> {
+    let what = format!("the record at line {line_number}");
+    let corruption = |detail: String| LogCorruptionError {
+        line_number,
+        detail,
+    };
+    let pairs = match record.as_object() {
+        Some(pairs) => pairs,
+        None => {
+            return Err(corruption(format!("{what} is not an object")));
+        }
+    };
+    let expected: HashSet<&str> = [
+        "format",
+        "at",
+        "call_digest",
+        "decision",
+        "source",
+        "reason",
+        "interpreter",
+        "rewritten_call",
+        "model",
+    ]
+    .into_iter()
+    .collect();
+    let present: HashSet<&str> = pairs.iter().map(|(key, _)| key.as_str()).collect();
+    if present != expected {
+        return Err(corruption(format!("{what} carries the wrong fields")));
+    }
+    if !is_text(record.get("at").unwrap()) {
+        return Err(corruption(format!("{what} carries an instant of no use")));
+    }
+    if !digest_form_ok(record.get("call_digest").unwrap()) {
+        return Err(corruption(format!("{what} carries a digest of no use")));
+    }
+    let decision_value = record.get("decision").unwrap();
+    if !matches!(decision_value, Value::Str(d) if ["allow", "deny", "escalate"].contains(&d.as_str()))
+    {
+        return Err(corruption(format!(
+            "{what} names a decision outside the set"
+        )));
+    }
+    let decision_text = decision_value.as_str().unwrap();
+    let source = record.get("source").unwrap();
+    let source_pairs = match source.as_object() {
+        Some(pairs) => pairs,
+        None => {
+            return Err(corruption(format!("{what} carries a source of no use")));
+        }
+    };
+    let source_keys: HashSet<&str> = source_pairs.iter().map(|(key, _)| key.as_str()).collect();
+    if source_keys != HashSet::from(["type", "rule"])
+        || source.get("type").unwrap() != &Value::text("model")
+        || !is_text(source.get("rule").unwrap())
+        || source.get("rule").unwrap().as_str() == Some("")
+    {
+        return Err(corruption(format!(
+            "{what} carries a model source of no use"
+        )));
+    }
+    let reason = record.get("reason").unwrap();
+    if !is_text(reason) || reason.as_str() == Some("") {
+        return Err(corruption(format!(
+            "{what} carries a model source with no reason"
+        )));
+    }
+    if !matches!(record.get("interpreter").unwrap(), Value::Bool(_)) {
+        return Err(corruption(format!(
+            "{what} carries an interpreter flag of no use"
+        )));
+    }
+    if *record.get("rewritten_call").unwrap() != Value::Null {
+        return Err(corruption(format!(
+            "{what} carries a rewritten call on a model record"
+        )));
+    }
+    let model = record.get("model").unwrap();
+    let model_pairs = match model.as_object() {
+        Some(pairs) => pairs,
+        None => {
+            return Err(corruption(format!(
+                "{what} carries a model field of no use"
+            )));
+        }
+    };
+    let model_keys: HashSet<&str> = model_pairs.iter().map(|(key, _)| key.as_str()).collect();
+    let expected_model_keys: HashSet<&str> = [
+        "model",
+        "verdict",
+        "confidence",
+        "probabilities",
+        "risk_score",
+        "fallback",
+        "failure",
+        "request_digest",
+    ]
+    .into_iter()
+    .collect();
+    if model_keys != expected_model_keys {
+        return Err(corruption(format!(
+            "{what} carries a model field with the wrong fields"
+        )));
+    }
+    if !matches!(model.get("model").unwrap(), Value::Str(name) if JUDGE_MODELS.contains(&name.as_str()))
+    {
+        return Err(corruption(format!(
+            "{what} carries a model name this gate does not carry"
+        )));
+    }
+    let verdict = model.get("verdict").unwrap();
+    let verdict_text = match verdict {
+        Value::Null => None,
+        Value::Str(label) if VERDICT_LABELS.contains(&label.as_str()) => Some(label.as_str()),
+        _ => {
+            return Err(corruption(format!("{what} carries a verdict of no use")));
+        }
+    };
+    let confidence = model.get("confidence").unwrap();
+    if *confidence != Value::Null && !record_number_in_range(confidence, 0.0, 1.0) {
+        return Err(corruption(format!("{what} carries a confidence of no use")));
+    }
+    let probabilities = model.get("probabilities").unwrap();
+    if *probabilities != Value::Null {
+        let probability_pairs = match probabilities.as_object() {
+            Some(pairs) if pairs.len() == 4 => pairs,
+            _ => {
+                return Err(corruption(format!(
+                    "{what} carries probabilities of no use"
+                )));
+            }
+        };
+        let probability_keys: HashSet<&str> = probability_pairs
+            .iter()
+            .map(|(key, _)| key.as_str())
+            .collect();
+        if probability_keys != VERDICT_LABELS.iter().copied().collect::<HashSet<&str>>() {
+            return Err(corruption(format!(
+                "{what} carries probabilities of no use"
+            )));
+        }
+        for label in VERDICT_LABELS {
+            if !record_number_in_range(probabilities.get(label).unwrap(), 0.0, 1.0) {
+                return Err(corruption(format!(
+                    "{what} carries probabilities of no use"
+                )));
+            }
+        }
+    }
+    if (verdict_text.is_none()) != (*confidence == Value::Null)
+        || (verdict_text.is_none()) != (*probabilities == Value::Null)
+    {
+        return Err(corruption(format!(
+            "{what} carries model fields that disagree"
+        )));
+    }
+    let risk_score = model.get("risk_score").unwrap();
+    if *risk_score != Value::Null && !record_number_in_range(risk_score, 1.0, 10.0) {
+        return Err(corruption(format!("{what} carries a risk score of no use")));
+    }
+    if !digest_form_ok(model.get("request_digest").unwrap()) {
+        return Err(corruption(format!(
+            "{what} carries a request digest of no use"
+        )));
+    }
+    let fallback = match model.get("fallback").unwrap().as_str() {
+        Some(name) => name,
+        None => {
+            return Err(corruption(format!("{what} carries a fallback of no use")));
+        }
+    };
+    let failure = model.get("failure").unwrap();
+    let failure_text = match failure {
+        Value::Null => None,
+        Value::Str(name) => Some(name.as_str()),
+        _ => {
+            return Err(corruption(format!("{what} carries a failure of no use")));
+        }
+    };
+    let fallback_outcome = decision_text == "escalate" || decision_text == "deny";
+    let agrees = match (fallback, failure_text) {
+        ("none", None) => {
+            verdict_text.is_some()
+                && (decision_text == verdict_text.unwrap()
+                    || (verdict_text == Some("escalate") && decision_text == "deny"))
+        }
+        ("threshold", None) => {
+            matches!(verdict_text, Some("allow") | Some("deny")) && fallback_outcome
+        }
+        ("abstention", Some("abstention")) => verdict_text == Some("other") && fallback_outcome,
+        ("silence", Some("silence"))
+        | ("malformed", Some("malformed"))
+        | ("transport", Some("transport"))
+        | ("no transport", Some("no transport")) => verdict_text.is_none() && fallback_outcome,
+        _ => false,
+    };
+    if !agrees {
+        return Err(corruption(format!(
+            "{what} carries a fallback and a failure that disagree"
         )));
     }
     Ok(record.clone())

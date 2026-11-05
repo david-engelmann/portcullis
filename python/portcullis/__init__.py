@@ -7,7 +7,11 @@ document and a call document as Python values, an audit log
 path, and the instant of the decision as ISO 8601 text, and
 it returns the decision as a plain dictionary in the
 portcullis-decision/1 shape after the library has appended
-that decision to the log. The function read_log takes an
+that decision to the log. An optional transport keyword on
+check hands the library a callable judge transport for
+policies whose rules refer calls to a decision model, and a
+decision the model influenced is returned in the
+portcullis-decision/2 shape. The function read_log takes an
 audit log path and returns its records as a list of plain
 dictionaries in log order.
 

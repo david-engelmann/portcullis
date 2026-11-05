@@ -5,7 +5,8 @@
 //! canonical JSON line, and appends that record to the audit log
 //! before the decision counts as delivered. Exit codes carry the
 //! outcome. Zero for an allow or a rewrite, one for a deny from
-//! any source and for corruption found by the log command, and
+//! any source and for an escalate and for corruption found by
+//! the log command, and
 //! two for a caller error. The argument surface mirrors the
 //! Python argparse surface, its subcommands and required options
 //! and its acceptance of unambiguous option prefixes and of the
@@ -17,12 +18,13 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use portcullis::{
-    append_decision, canonical, evaluate, load_policy, read_log, strict_parse, CallerError,
-    LogReadError, Policy, Value,
+    append_decision, canonical, evaluate, evaluate_with_transport, load_policy, read_log,
+    strict_parse, CallerError, LogReadError, Policy, SubprocessTransport, Value,
 };
 
 const MAIN_USAGE: &str = "usage: portcullis [-h] {check,log} ...";
-const CHECK_USAGE: &str = "usage: portcullis check [-h] --policy POLICY --log LOG [call]";
+const CHECK_USAGE: &str =
+    "usage: portcullis check [-h] --policy POLICY --log LOG [--judge COMMAND] [call]";
 const LOG_USAGE: &str = "usage: portcullis log [-h] --log LOG";
 
 fn fail(message: &str) {
@@ -176,7 +178,12 @@ fn load_policy_file(path: &PathBuf) -> (Option<Policy>, Option<String>) {
     }
 }
 
-fn check(policy_path: PathBuf, log_path: PathBuf, call_path: Option<PathBuf>) -> i32 {
+fn check(
+    policy_path: PathBuf,
+    log_path: PathBuf,
+    judge_command: Option<String>,
+    call_path: Option<PathBuf>,
+) -> i32 {
     let call_text = match read_call_text(&call_path) {
         Ok(text) => text,
         Err(exc) => {
@@ -193,7 +200,19 @@ fn check(policy_path: PathBuf, log_path: PathBuf, call_path: Option<PathBuf>) ->
     };
     let (policy, policy_error) = load_policy_file(&policy_path);
     let at = now_iso();
-    let decision = evaluate(policy.as_ref(), policy_error.as_deref(), &document, &at);
+    let decision = match &judge_command {
+        Some(command) => {
+            let transport = SubprocessTransport::new(command);
+            evaluate_with_transport(
+                policy.as_ref(),
+                policy_error.as_deref(),
+                &document,
+                &at,
+                Some(&transport),
+            )
+        }
+        None => evaluate(policy.as_ref(), policy_error.as_deref(), &document, &at),
+    };
     if let Err(exc) = append_decision(&log_path, &decision) {
         fail(&format!(
             "the decision could not be appended to the audit log at {}, {}",
@@ -239,6 +258,7 @@ fn log(log_path: PathBuf) -> i32 {
 struct ParsedArgs {
     policy: Option<PathBuf>,
     log: Option<PathBuf>,
+    judge: Option<String>,
     call: Option<PathBuf>,
 }
 
@@ -296,13 +316,14 @@ fn parse_subcommand(command: &str, args: &[OsString]) -> Result<ParsedArgs, (Str
         LOG_USAGE
     };
     let known: &[&str] = if command == "check" {
-        &["--policy", "--log", "--help"]
+        &["--policy", "--log", "--judge", "--help"]
     } else {
         &["--log", "--help"]
     };
     let mut parsed = ParsedArgs {
         policy: None,
         log: None,
+        judge: None,
         call: None,
     };
     let mut positional_only = false;
@@ -343,6 +364,7 @@ fn parse_subcommand(command: &str, args: &[OsString]) -> Result<ParsedArgs, (Str
             };
             match option {
                 "--policy" => parsed.policy = Some(value),
+                "--judge" => parsed.judge = Some(value.to_string_lossy().into_owned()),
                 _ => parsed.log = Some(value),
             }
             index += 1;
@@ -391,7 +413,12 @@ fn run() -> i32 {
         "check" | "log" => match parse_subcommand(&first, &args[1..]) {
             Ok(parsed) => {
                 if first == "check" {
-                    check(parsed.policy.unwrap(), parsed.log.unwrap(), parsed.call)
+                    check(
+                        parsed.policy.unwrap(),
+                        parsed.log.unwrap(),
+                        parsed.judge,
+                        parsed.call,
+                    )
                 } else {
                     log(parsed.log.unwrap())
                 }
