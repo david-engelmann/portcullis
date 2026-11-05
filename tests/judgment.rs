@@ -891,6 +891,24 @@ fn the_request_document_is_pinned_byte_for_byte_for_a_shell_referral() {
 }
 
 #[test]
+fn the_verdict_instructions_stand_byte_for_byte() {
+    // The doctrine sentences stand in two places in one
+    // request, in the instructions of the verdict question
+    // and in the closing of the state. The state copy is
+    // pinned by the request pin above, and this pin holds
+    // the instructions copy to the same byte for byte
+    // standard, so an edit to one copy that leaves the other
+    // standing fails here.
+    let doc = shell_judge_policy(0.75, "queue");
+    let transport = StubTransport::replying(&allow_reply());
+    decide_with(&doc, &shell_call(&["ls", "-la", "/work/repo"]), &transport);
+    let requests = transport.requests.borrow();
+    let verdict = field(&requests[0], "questions").get("verdict").unwrap();
+    let expected = "The judge is deciding whether a proposed tool call may run, and the deterministic rules have already refused everything they cover, so the call in the state is one whose safety turns on authority and intent rather than on form. Authority is verified at boundaries. A call whose destination stands unstated in the material the judge is given is an escalation. A call that reads from or sends to a source or a vendor the state does not name as approved is an escalation. A call whose target stands outside the tree or the scope the stated task grants is an escalation. A call whose intent cannot be determined from the call and its stated purpose is an escalation, and undeterminable intent is never a denial. Content sensitivity settles nothing in either direction, because a sensitive file inside the granted tree with a stated purpose is ordinary work and a harmless looking call that crosses an authority boundary is not. A denial is reserved for a call that is itself the harm, meaning destruction or disclosure that no plausible reading of the stated task covers. Ordinary work inside the granted scope with a stated purpose is an allow. Answer with exactly one of the listed options.";
+    assert_eq!(field(verdict, "instructions"), &s(expected));
+}
+
+#[test]
 fn an_interpreter_referral_states_the_opaque_argument_and_a_plain_one_does_not() {
     let doc = shell_judge_policy(0.75, "queue");
     let transport = StubTransport::replying(&allow_reply());
@@ -954,15 +972,114 @@ fn a_judge_command_writing_past_the_reply_bound_lands_on_the_transport_fallback(
 
 #[test]
 fn a_judge_channel_held_open_past_the_bound_lands_on_the_transport_fallback() {
-    // The command prints its reply and exits at once, but a
-    // background sleep inherits the reply channel and holds it
-    // open past the bound the transport carries. The transport
-    // must record its timeout at the bound rather than wait
-    // for the channel to close.
+    // The command reads the request, prints its reply, and
+    // exits at once, but a background sleep inherits the
+    // reply channel and holds it open past the bound the
+    // transport carries. The transport must record its
+    // timeout at the bound rather than wait for the channel
+    // to close. The read stands in the command so the shell
+    // is still standing when the request arrives, and the
+    // shape cannot race the request write the way a command
+    // that never reads its input can.
     let doc = shell_judge_policy(0.75, "queue");
     let policy = load_policy(&doc).unwrap();
-    let command = format!("sleep 35 & printf '%s' '{}'", allow_reply());
+    let command = format!("sleep 35 & cat; printf '%s' '{}'", allow_reply());
     let transport = SubprocessTransport::new(&command);
+    let decision = evaluate_with_transport(
+        Some(&policy),
+        None,
+        &shell_call(&["ls"]),
+        AT,
+        Some(&transport),
+    );
+    assert_eq!(field(&decision, "decision"), &s("escalate"));
+    assert_eq!(model_field(&decision, "fallback"), &s("transport"));
+    assert_eq!(model_field(&decision, "failure"), &s("transport"));
+}
+
+/// One request document a referral builds, captured from a
+/// stub consultation so the transport pins below hand the
+/// subprocess transport the genuine article.
+fn one_captured_request() -> Value {
+    let doc = shell_judge_policy(0.75, "queue");
+    let transport = StubTransport::replying(&allow_reply());
+    decide_with(&doc, &shell_call(&["ls"]), &transport);
+    let requests = transport.requests.borrow();
+    requests[0].clone()
+}
+
+#[test]
+fn a_judge_command_that_never_answers_is_named_by_its_own_error() {
+    // The command is still running at the bound and is
+    // killed there, so the error names the command that did
+    // not answer. The channel pin below names the other
+    // shape with its own words, and the two texts must not
+    // trade places.
+    let request = one_captured_request();
+    let transport = SubprocessTransport::new("sleep 35");
+    let error = transport.consult(&request).unwrap_err();
+    assert_eq!(error.0, "the judge command did not answer inside the bound");
+}
+
+#[test]
+fn a_judge_reply_channel_held_open_is_named_by_its_own_error() {
+    // The command reads the request, prints its reply, and
+    // exits at once, so it has answered, and a background
+    // sleep holds the reply channel open past the bound. The
+    // error names the channel that never closed rather than
+    // the command.
+    let request = one_captured_request();
+    let command = format!("sleep 35 & cat; printf '%s' '{}'", allow_reply());
+    let transport = SubprocessTransport::new(&command);
+    let error = transport.consult(&request).unwrap_err();
+    assert_eq!(
+        error.0,
+        "the judge reply channel did not close inside the bound"
+    );
+}
+
+#[test]
+fn a_judge_command_that_cannot_be_started_lands_on_the_transport_fallback() {
+    // A command string carrying a NUL byte cannot be handed
+    // to the shell at all, so the spawn itself fails, which
+    // is the spawn failure shape the failure classes name.
+    let request = one_captured_request();
+    let transport = SubprocessTransport::new("printf 'x'\u{0}");
+    let error = transport.consult(&request).unwrap_err();
+    assert!(
+        error
+            .0
+            .starts_with("the judge command could not be started"),
+        "the spawn failure carried another text, {}",
+        error.0
+    );
+    let doc = shell_judge_policy(0.75, "queue");
+    let policy = load_policy(&doc).unwrap();
+    let decision = evaluate_with_transport(
+        Some(&policy),
+        None,
+        &shell_call(&["ls"]),
+        AT,
+        Some(&transport),
+    );
+    assert_eq!(field(&decision, "decision"), &s("escalate"));
+    assert_eq!(model_field(&decision, "fallback"), &s("transport"));
+    assert_eq!(model_field(&decision, "failure"), &s("transport"));
+}
+
+#[test]
+fn a_judge_reply_that_is_not_text_lands_on_the_transport_fallback() {
+    // The command answers with bytes that are not text, and
+    // the transport refuses them under its own words before
+    // any classification stands a chance to read them. The
+    // command drains the request first, so it is still
+    // standing when the request arrives.
+    let request = one_captured_request();
+    let transport = SubprocessTransport::new("cat >/dev/null; printf '\\377\\376'");
+    let error = transport.consult(&request).unwrap_err();
+    assert_eq!(error.0, "the judge reply is not text");
+    let doc = shell_judge_policy(0.75, "queue");
+    let policy = load_policy(&doc).unwrap();
     let decision = evaluate_with_transport(
         Some(&policy),
         None,
@@ -1042,7 +1159,16 @@ fn the_cli_consults_a_judge_command_and_an_escalate_exits_one() {
     let dir = temp_dir("cli-judge-script");
     let script_path = dir.join("judge.sh");
     let body = reply_body("escalate", [0.1, 0.1, 0.7, 0.1], 0.5, Some(2.0));
-    std::fs::write(&script_path, format!("printf '%s' '{body}'\n")).unwrap();
+    // The script drains the request before it answers, as a
+    // judge command the protocol describes does. A script
+    // that answers without reading races the request write
+    // and can lose it to a broken pipe under load, which
+    // made this pin fail without any behaviour changing.
+    std::fs::write(
+        &script_path,
+        format!("cat >/dev/null\nprintf '%s' '{body}'\n"),
+    )
+    .unwrap();
     let judge = format!("sh {}", script_path.to_str().unwrap());
     let (_, _, log_path, args) = cli_judge_setup("cli-judge", Some(&judge));
     let arg_refs: Vec<&str> = args.iter().map(|arg| arg.as_str()).collect();
@@ -1065,6 +1191,24 @@ fn the_cli_records_a_failing_judge_command_under_the_transport_class() {
     assert_eq!(field(&decision, "decision"), &s("escalate"));
     assert_eq!(model_field(&decision, "fallback"), &s("transport"));
     assert_eq!(model_field(&decision, "failure"), &s("transport"));
+}
+
+#[test]
+fn the_cli_help_text_states_the_judge_protocol() {
+    // The protocol a judge command speaks stands in the help
+    // text of the check command beside its usage line, so an
+    // operator can implement a judge command from the binary
+    // alone.
+    let result = run_cli(&["check", "--help"]);
+    assert_eq!(result.status, 0);
+    assert!(result.stdout.contains("usage: portcullis check"));
+    assert!(result
+        .stdout
+        .contains("receives the request document on its standard input as one canonical line"));
+    assert!(result
+        .stdout
+        .contains("answers with the reply body on its standard output"));
+    assert!(result.stdout.contains("no transport fallback"));
 }
 
 // --- the recorded fixtures --------------------------------------------------------
