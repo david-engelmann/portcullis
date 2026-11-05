@@ -41,6 +41,7 @@ pub const CALL_FORMAT: &str = "portcullis-call/1";
 pub const POLICY_FORMAT: &str = "portcullis-policy/1";
 pub const DECISION_FORMAT: &str = "portcullis-decision/1";
 pub const DECISION_FORMAT_2: &str = "portcullis-decision/2";
+pub const AUDIT_FORMAT: &str = "portcullis-audit/1";
 
 /// The models a policy judgment block may name in this build.
 pub const JUDGE_MODELS: [&str; 1] = ["jev-1.13.0"];
@@ -3255,4 +3256,99 @@ pub fn read_log(log_path: &Path) -> Result<Vec<Value>, LogReadError> {
         }
     }
     Ok(records)
+}
+
+// --- the sampling audit -------------------------------------------------------
+
+/// Audit the log at the path and return the report document
+/// of the sampling slice, in the format portcullis-audit/1.
+///
+/// The named size is judged before the log is read, and a
+/// size of zero is a caller error. The log is then read whole
+/// through read_log unchanged, so a log that does not stand
+/// and a log corrupt at a named line refuse the audit with the
+/// error the log reading already stands on. Every record the
+/// reader returns stands in exactly one of the four classes
+/// obligation PC-21 names. The ranked class, the second format
+/// records whose decision names allow and whose risk score
+/// stands as a number, orders by the score descending, and
+/// records whose scores stand equal keep their line order, the
+/// earlier line first, because the sort is stable over records
+/// gathered in line order. A named size above the ranked class
+/// returns the whole class, with the named size and the
+/// returned count both standing in the report. The audit
+/// writes nothing and decides nothing, and the report it
+/// returns exists only where a caller prints or keeps it.
+pub fn audit_log(log_path: &Path, sample_size: usize) -> Result<Value, LogReadError> {
+    if sample_size == 0 {
+        return Err(LogReadError::Caller(CallerError(
+            "the sample size must stand at one or above".to_string(),
+        )));
+    }
+    let records = read_log(log_path)?;
+    let mut ranked: Vec<(usize, f64, Value)> = Vec::new();
+    let mut scored_not_allowed: usize = 0;
+    let mut unscored: usize = 0;
+    let mut first_format: usize = 0;
+    for (index, record) in records.iter().enumerate() {
+        let line = index + 1;
+        match record.get("format") {
+            Some(format) if format == &Value::text(DECISION_FORMAT_2) => {
+                let score = record
+                    .get("model")
+                    .and_then(|model| model.get("risk_score"))
+                    .and_then(number_f64);
+                match (
+                    record.get("decision").and_then(|value| value.as_str()),
+                    score,
+                ) {
+                    (Some("allow"), Some(number)) => {
+                        ranked.push((line, number, record.clone()));
+                    }
+                    (Some("deny") | Some("escalate"), Some(_)) => {
+                        scored_not_allowed += 1;
+                    }
+                    _ => {
+                        unscored += 1;
+                    }
+                }
+            }
+            _ => {
+                first_format += 1;
+            }
+        }
+    }
+    let ranked_count = ranked.len();
+    ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    let returned = sample_size.min(ranked_count);
+    let mut sample = Vec::with_capacity(returned);
+    for (offset, (line, _number, record)) in ranked.into_iter().take(returned).enumerate() {
+        let risk_score = record
+            .get("model")
+            .and_then(|model| model.get("risk_score"))
+            .cloned()
+            .unwrap_or(Value::Null);
+        sample.push(Value::obj(vec![
+            ("rank", Value::int((offset + 1) as i64)),
+            ("line", Value::int(line as i64)),
+            ("risk_score", risk_score),
+            ("record", record),
+        ]));
+    }
+    Ok(Value::obj(vec![
+        ("format", Value::text(AUDIT_FORMAT)),
+        ("requested", Value::Int(sample_size.to_string())),
+        ("returned", Value::int(returned as i64)),
+        (
+            "counts",
+            Value::obj(vec![
+                ("lines", Value::int(records.len() as i64)),
+                ("ranked", Value::int(ranked_count as i64)),
+                ("scored_not_allowed", Value::int(scored_not_allowed as i64)),
+                ("unscored", Value::int(unscored as i64)),
+                ("first_format", Value::int(first_format as i64)),
+            ]),
+        ),
+        ("sample", Value::Array(sample)),
+    ]))
 }
