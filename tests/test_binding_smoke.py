@@ -583,3 +583,90 @@ def test_the_exceptions_form_one_family():
         portcullis.LogCorruptionError,
     ):
         assert issubclass(cls, portcullis.PortcullisError)
+
+
+def judge_policy():
+    return {
+        "format": "portcullis-policy/1",
+        "default": "deny",
+        "judgment": {"model": "jev-1.13.0", "threshold": 0.75, "escalation": "queue"},
+        "rules": [
+            {
+                "id": "judge-shell",
+                "kind": "shell",
+                "action": "judge",
+                "reason": "shell calls whose safety turns on the stated task",
+                "match": {"argv0": {"glob": "*"}},
+            }
+        ],
+    }
+
+
+def verdict_reply(choice, probabilities):
+    return json.dumps(
+        {
+            "model": "jev-1.13.0",
+            "answers": {
+                "verdict": {
+                    "type": "choice",
+                    "choice": choice,
+                    "confidence": 0.5,
+                    "probabilities": probabilities,
+                },
+                "risk": {"type": "score", "score": 3.2, "probabilities": {}},
+            },
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+        }
+    )
+
+
+def test_a_callable_transport_carries_a_referral(tmp_path):
+    seen = []
+
+    def transport(request):
+        seen.append(request)
+        return verdict_reply(
+            "allow", {"allow": 0.93, "deny": 0.03, "escalate": 0.03, "other": 0.01}
+        )
+
+    log = tmp_path / "audit.jsonl"
+    decision = portcullis.check(
+        judge_policy(),
+        {"format": "portcullis-call/1", "kind": "shell", "argv": ["ls"]},
+        log,
+        AT,
+        transport=transport,
+    )
+    assert len(seen) == 1
+    assert seen[0]["model"] == "jev-1.13.0"
+    assert "The referring rule is judge-shell." in seen[0]["state"]
+    assert decision["format"] == "portcullis-decision/2"
+    assert decision["decision"] == "allow"
+    assert decision["source"] == {"rule": "judge-shell", "type": "model"}
+    assert decision["model"]["verdict"] == "allow"
+    assert decision["model"]["confidence"] == 0.93
+    assert decision["model"]["risk_score"] == 4.2
+    assert decision["model"]["fallback"] == "none"
+    assert decision["model"]["failure"] is None
+    assert portcullis.read_log(log) == [decision]
+
+
+def test_a_failing_callable_lands_on_the_transport_fallback(tmp_path):
+    def raising(request):
+        raise RuntimeError("the judge is unreachable")
+
+    def not_text(request):
+        return {"verdict": "allow"}
+
+    call = {"format": "portcullis-call/1", "kind": "shell", "argv": ["ls"]}
+    for name, transport in [("raising", raising), ("not-text", not_text)]:
+        log = tmp_path / f"{name}.jsonl"
+        decision = portcullis.check(
+            judge_policy(), call, log, AT, transport=transport
+        )
+        assert decision["format"] == "portcullis-decision/2"
+        assert decision["decision"] == "escalate"
+        assert decision["model"]["fallback"] == "transport"
+        assert decision["model"]["failure"] == "transport"
+        assert decision["model"]["verdict"] is None
+        assert portcullis.read_log(log) == [decision]
