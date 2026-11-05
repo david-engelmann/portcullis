@@ -2,7 +2,7 @@
 
 Importing the package loads the native module and re-exports
 its whole surface under the package name. The functions are
-check and read_log. The function check takes a policy
+check and read_log and audit_log. The function check takes a policy
 document and a call document as Python values, an audit log
 path, and the instant of the decision as ISO 8601 text, and
 it returns the decision as a plain dictionary in the
@@ -13,7 +13,10 @@ policies whose rules refer calls to a decision model, and a
 decision the model influenced is returned in the
 portcullis-decision/2 shape. The function read_log takes an
 audit log path and returns its records as a list of plain
-dictionaries in log order.
+dictionaries in log order. The function audit_log takes an
+audit log path and a sample size and returns the sampling
+report as a plain dictionary in the portcullis-audit/1
+shape, and it writes nothing.
 
 The refusals form one family under PortcullisError. A
 CallerError carries a caller error of the library, in the
@@ -34,6 +37,7 @@ from portcullis._portcullis import (
     LogAppendError,
     LogCorruptionError,
     PortcullisError,
+    audit_log,
     check,
     read_log,
 )
@@ -43,6 +47,7 @@ __all__ = [
     "LogAppendError",
     "LogCorruptionError",
     "PortcullisError",
+    "audit_log",
     "check",
     "read_log",
 ]

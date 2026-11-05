@@ -1,12 +1,14 @@
 //! The command line for portcullis, a thin shell over the core.
 //!
-//! The two commands are check and log. The check command reads
+//! The three commands are check and log and audit. The check command reads
 //! one policy and one call, prints the decision record as one
 //! canonical JSON line, and appends that record to the audit log
-//! before the decision counts as delivered. Exit codes carry the
-//! outcome. Zero for an allow or a rewrite, one for a deny from
-//! any source and for an escalate and for corruption found by
-//! the log command, and
+//! before the decision counts as delivered. The audit command
+//! reads one audit log whole and prints the sampling report as
+//! one canonical JSON line, and it decides nothing. Exit codes carry the
+//! outcome. Zero for an allow or a rewrite and for an audit
+//! report printed, one for a deny from any source and for an escalate and for corruption found by
+//! the log command or the audit command, and
 //! two for a caller error. The argument surface mirrors the
 //! Python argparse surface, its subcommands and required options
 //! and its acceptance of unambiguous option prefixes and of the
@@ -18,15 +20,17 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use portcullis::{
-    append_decision, canonical, evaluate, evaluate_with_transport, load_policy, read_log,
-    strict_parse, CallerError, LogReadError, Policy, SubprocessTransport, Value,
+    append_decision, audit_log, canonical, evaluate, evaluate_with_transport, load_policy,
+    read_log, strict_parse, CallerError, LogReadError, Policy, SubprocessTransport, Value,
 };
 
-const MAIN_USAGE: &str = "usage: portcullis [-h] {check,log} ...";
+const MAIN_USAGE: &str = "usage: portcullis [-h] {check,log,audit} ...";
 const CHECK_USAGE: &str =
     "usage: portcullis check [-h] --policy POLICY --log LOG [--judge COMMAND] [call]";
 const LOG_USAGE: &str = "usage: portcullis log [-h] --log LOG";
+const AUDIT_USAGE: &str = "usage: portcullis audit [-h] --log LOG --sample SAMPLE";
 const CHECK_HELP: &str = "The judge command is an external program the check command consults for a call the policy refers. It receives the request document on its standard input as one canonical line and answers with the reply body on its standard output, under a timeout of thirty seconds the library fixes. With no judge command configured, every referred call is decided on the no transport fallback.";
+const AUDIT_HELP: &str = "The audit ranks recorded calls by their recorded scores and decides nothing. It reads the audit log whole and prints one report naming the count of each class of record and the sample of the highest ranked allows the named size asks for.";
 
 fn fail(message: &str) {
     eprintln!("error: {message}");
@@ -56,6 +60,9 @@ fn print_help(command: &str, usage: &str) {
     let _ = print_line(&format!("{usage}\n"));
     if command == "check" {
         let _ = print_line(CHECK_HELP);
+    }
+    if command == "audit" {
+        let _ = print_line(AUDIT_HELP);
     }
 }
 
@@ -266,10 +273,32 @@ fn log(log_path: PathBuf) -> i32 {
     }
 }
 
+fn audit(log_path: PathBuf, sample_size: usize) -> i32 {
+    match audit_log(&log_path, sample_size) {
+        Ok(report) => {
+            let line = String::from_utf8(canonical(&report)).unwrap();
+            if print_line(&line).is_err() {
+                fail("the audit report could not be printed");
+                return 2;
+            }
+            0
+        }
+        Err(LogReadError::Corruption(exc)) => {
+            fail(&format!("the audit log is corrupt at {exc}"));
+            1
+        }
+        Err(LogReadError::Caller(exc)) => {
+            fail(&exc.0);
+            2
+        }
+    }
+}
+
 struct ParsedArgs {
     policy: Option<PathBuf>,
     log: Option<PathBuf>,
     judge: Option<String>,
+    sample: Option<usize>,
     call: Option<PathBuf>,
 }
 
@@ -321,20 +350,21 @@ fn match_long_option<'a>(
 }
 
 fn parse_subcommand(command: &str, args: &[OsString]) -> Result<ParsedArgs, (String, i32)> {
-    let usage = if command == "check" {
-        CHECK_USAGE
-    } else {
-        LOG_USAGE
+    let usage = match command {
+        "check" => CHECK_USAGE,
+        "audit" => AUDIT_USAGE,
+        _ => LOG_USAGE,
     };
-    let known: &[&str] = if command == "check" {
-        &["--policy", "--log", "--judge", "--help"]
-    } else {
-        &["--log", "--help"]
+    let known: &[&str] = match command {
+        "check" => &["--policy", "--log", "--judge", "--help"],
+        "audit" => &["--log", "--sample", "--help"],
+        _ => &["--log", "--help"],
     };
     let mut parsed = ParsedArgs {
         policy: None,
         log: None,
         judge: None,
+        sample: None,
         call: None,
     };
     let mut positional_only = false;
@@ -376,6 +406,25 @@ fn parse_subcommand(command: &str, args: &[OsString]) -> Result<ParsedArgs, (Str
             match option {
                 "--policy" => parsed.policy = Some(value),
                 "--judge" => parsed.judge = Some(value.to_string_lossy().into_owned()),
+                "--sample" => {
+                    let text = value.to_string_lossy().into_owned();
+                    match text.parse::<usize>() {
+                        Ok(0) => {
+                            return Err((
+                                "argument --sample: the sample size must stand at one or above"
+                                    .to_string(),
+                                2,
+                            ));
+                        }
+                        Ok(size) => parsed.sample = Some(size),
+                        Err(_) => {
+                            return Err((
+                                format!("argument --sample: unusable count value: {text}"),
+                                2,
+                            ));
+                        }
+                    }
+                }
                 _ => parsed.log = Some(value),
             }
             index += 1;
@@ -397,6 +446,9 @@ fn parse_subcommand(command: &str, args: &[OsString]) -> Result<ParsedArgs, (Str
     }
     if parsed.log.is_none() {
         missing.push("--log");
+    }
+    if command == "audit" && parsed.sample.is_none() {
+        missing.push("--sample");
     }
     if !missing.is_empty() {
         return Err((
@@ -421,7 +473,7 @@ fn run() -> i32 {
         return 0;
     }
     match first.as_str() {
-        "check" | "log" => match parse_subcommand(&first, &args[1..]) {
+        "check" | "log" | "audit" => match parse_subcommand(&first, &args[1..]) {
             Ok(parsed) => {
                 if first == "check" {
                     check(
@@ -430,6 +482,8 @@ fn run() -> i32 {
                         parsed.judge,
                         parsed.call,
                     )
+                } else if first == "audit" {
+                    audit(parsed.log.unwrap(), parsed.sample.unwrap())
                 } else {
                     log(parsed.log.unwrap())
                 }
@@ -438,10 +492,10 @@ fn run() -> i32 {
                 if detail.is_empty() {
                     code
                 } else {
-                    let usage = if first == "check" {
-                        CHECK_USAGE
-                    } else {
-                        LOG_USAGE
+                    let usage = match first.as_str() {
+                        "check" => CHECK_USAGE,
+                        "audit" => AUDIT_USAGE,
+                        _ => LOG_USAGE,
                     };
                     arg_error(usage, &detail)
                 }

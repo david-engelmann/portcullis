@@ -670,3 +670,104 @@ def test_a_failing_callable_lands_on_the_transport_fallback(tmp_path):
         assert decision["model"]["failure"] == "transport"
         assert decision["model"]["verdict"] is None
         assert portcullis.read_log(log) == [decision]
+
+
+def scored_reply(wire_score):
+    return json.dumps(
+        {
+            "model": "jev-1.13.0",
+            "answers": {
+                "verdict": {
+                    "type": "choice",
+                    "choice": "allow",
+                    "confidence": 0.5,
+                    "probabilities": {
+                        "allow": 0.93,
+                        "deny": 0.03,
+                        "escalate": 0.03,
+                        "other": 0.01,
+                    },
+                },
+                "risk": {"type": "score", "score": wire_score, "probabilities": {}},
+            },
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+        }
+    )
+
+
+def test_audit_log_returns_the_report_over_a_built_log(tmp_path):
+    log = tmp_path / "audit.jsonl"
+    call = {"format": "portcullis-call/1", "kind": "shell", "argv": ["ls"]}
+    low = portcullis.check(
+        judge_policy(), call, log, AT, transport=lambda request: scored_reply(3.2)
+    )
+    high = portcullis.check(
+        judge_policy(), call, log, AT, transport=lambda request: scored_reply(8.0)
+    )
+    plain = portcullis.check(
+        fixture("policy-full.json"), fixture("call-shell-allow.json"), log, AT
+    )
+    assert low["model"]["risk_score"] == 4.2
+    assert high["model"]["risk_score"] == 9.0
+    assert plain["format"] == "portcullis-decision/1"
+    before = log.read_bytes()
+    report = portcullis.audit_log(log, 5)
+    assert log.read_bytes() == before
+    assert report["format"] == "portcullis-audit/1"
+    assert report["requested"] == 5
+    assert report["returned"] == 2
+    assert report["counts"] == {
+        "lines": 3,
+        "ranked": 2,
+        "scored_not_allowed": 0,
+        "unscored": 0,
+        "first_format": 1,
+    }
+    assert [entry["rank"] for entry in report["sample"]] == [1, 2]
+    assert [entry["line"] for entry in report["sample"]] == [2, 1]
+    assert [entry["risk_score"] for entry in report["sample"]] == [9.0, 4.2]
+    assert report["sample"][0]["record"] == high
+    assert report["sample"][1]["record"] == low
+    with pytest.raises(portcullis.CallerError) as refused:
+        portcullis.audit_log(log, 0)
+    assert str(refused.value) == "the sample size must stand at one or above"
+
+
+def test_audit_log_clamps_sizes_beyond_the_machine_range(tmp_path):
+    log = tmp_path / "audit.jsonl"
+    call = {"format": "portcullis-call/1", "kind": "shell", "argv": ["ls"]}
+    portcullis.check(
+        judge_policy(), call, log, AT, transport=lambda request: scored_reply(3.2)
+    )
+    portcullis.check(
+        judge_policy(), call, log, AT, transport=lambda request: scored_reply(8.0)
+    )
+    portcullis.check(
+        fixture("policy-full.json"), fixture("call-shell-allow.json"), log, AT
+    )
+    for size in [2**63, 2**64]:
+        report = portcullis.audit_log(log, size)
+        assert report["requested"] == size
+        assert report["returned"] == 2
+        assert report["counts"]["ranked"] == 2
+        assert [entry["line"] for entry in report["sample"]] == [2, 1]
+        assert [entry["risk_score"] for entry in report["sample"]] == [9.0, 4.2]
+    with pytest.raises(portcullis.CallerError) as refused:
+        portcullis.audit_log(log, -(2**63))
+    assert str(refused.value) == "the sample size must stand at one or above"
+
+
+def test_audit_log_raises_the_corruption_class_over_a_corrupt_log(tmp_path):
+    log = tmp_path / "audit.jsonl"
+    portcullis.check(
+        fixture("policy-full.json"), fixture("call-shell-allow.json"), log, AT
+    )
+    lines = log.read_text(encoding="utf-8").splitlines()
+    lines.append(lines[0].replace('"allow"', '"rewrite"', 1))
+    log.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    with pytest.raises(portcullis.LogCorruptionError) as refused:
+        portcullis.audit_log(log, 2)
+    assert str(refused.value).startswith("the audit log is corrupt at line 2,")
+    result = run_cli("audit", "--log", str(log), "--sample", "2")
+    assert result.returncode == 1
+    assert result.stderr.strip() == f"error: {refused.value}"

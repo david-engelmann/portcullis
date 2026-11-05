@@ -23,3 +23,7 @@ The live call budget for this repo is a call count budget, set by the repo owner
 ## Round 3
 
 Round 3 opens with the admission slice. The contract amendment PC-13 to PC-20 lands first in the slice pull request and states the referral, the judgment block, the combination rule, the failure classes, the second decision record format, the risk score, the transport seam, and the limits of the slice. The library and command line and binding build follows the amendment in the same pull request, and the recorded fixtures and the deterministic pins follow the build. The admission slice landed in PR 8 and Round 3 closed with it.
+
+## Round 4
+
+Round 4 opens with the sampling audit slice. The contract amendment PC-21 to PC-25 lands first in the slice pull request and states the audit population, the ranking rule, the audit report, the audit surface, and the limits of the sampling slice. The library and command line and binding build follows the amendment in the same pull request, and the pins follow the build, and no live call stands anywhere in the slice.
