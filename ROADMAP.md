@@ -1,6 +1,6 @@
 # Portcullis roadmap
 
-Portcullis guards tool calls. It is the admission gate an agent's proposed tool call passes through before the call runs, and it has closed its first two rounds. Its setup slice and its first deterministic slices come before anything in the decision model section below. That section is recorded now, before the gate is built, so the admission design grows around a stated place for judgment instead of acquiring one later by accident.
+Portcullis guards tool calls. It is the admission gate an agent's proposed tool call passes through before the call runs, and it has closed its first three rounds. Its setup slice and its first deterministic slices come before anything in the decision model section below. That section is recorded now, before the gate is built, so the admission design grows around a stated place for judgment instead of acquiring one later by accident.
 
 ## Decision models
 
@@ -22,4 +22,4 @@ The live call budget for this repo is a call count budget, set by the repo owner
 
 ## Round 3
 
-Round 3 opens with the admission slice. The contract amendment PC-13 to PC-20 lands first in the slice pull request and states the referral, the judgment block, the combination rule, the failure classes, the second decision record format, the risk score, the transport seam, and the limits of the slice. The library and command line and binding build follows the amendment in the same pull request, and the recorded fixtures and the deterministic pins follow the build.
+Round 3 opens with the admission slice. The contract amendment PC-13 to PC-20 lands first in the slice pull request and states the referral, the judgment block, the combination rule, the failure classes, the second decision record format, the risk score, the transport seam, and the limits of the slice. The library and command line and binding build follows the amendment in the same pull request, and the recorded fixtures and the deterministic pins follow the build. The admission slice landed in PR 8 and Round 3 closed with it.
