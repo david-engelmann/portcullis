@@ -2186,6 +2186,12 @@ impl SubprocessTransport {
     }
 }
 
+/// The most reply bytes a subprocess transport carries. A
+/// judge reply is a small document, and a command that writes
+/// past this bound has its reply refused as a transport
+/// failure rather than read without limit into memory.
+const REPLY_LIMIT_BYTES: usize = 1_048_576;
+
 impl JudgeTransport for SubprocessTransport {
     fn consult(&self, request: &Value) -> Result<String, TransportError> {
         use std::io::Read;
@@ -2201,19 +2207,33 @@ impl JudgeTransport for SubprocessTransport {
             .map_err(|exc| {
                 TransportError(format!("the judge command could not be started, {exc}"))
             })?;
-        let mut stdin = child.stdin.take().unwrap();
-        let writer = std::thread::spawn(move || {
-            let _ = stdin.write_all(&line);
-            let _ = stdin.flush();
-        });
-        let mut stdout = child.stdout.take().unwrap();
-        let reader = std::thread::spawn(move || {
-            let mut body = Vec::new();
-            let _ = stdout.read_to_end(&mut body);
-            body
-        });
         let deadline =
             std::time::Instant::now() + std::time::Duration::from_secs(JUDGE_TIMEOUT_SECONDS);
+        let mut stdin = child.stdin.take().unwrap();
+        let (writer_out, writer_in) = std::sync::mpsc::channel();
+        let writer = std::thread::spawn(move || {
+            let written = stdin.write_all(&line).and_then(|_| stdin.flush());
+            let _ = writer_out.send(written);
+        });
+        let mut stdout = child.stdout.take().unwrap();
+        let (reader_out, reader_in) = std::sync::mpsc::channel();
+        let reader = std::thread::spawn(move || {
+            let mut body = Vec::new();
+            let read = stdout
+                .by_ref()
+                .take((REPLY_LIMIT_BYTES + 1) as u64)
+                .read_to_end(&mut body);
+            let carried = match read {
+                Ok(_) if body.len() > REPLY_LIMIT_BYTES => Err(TransportError(
+                    "the judge reply stands past the size bound the transport carries".to_string(),
+                )),
+                Ok(_) => Ok(body),
+                Err(exc) => Err(TransportError(format!(
+                    "the judge reply could not be read, {exc}"
+                ))),
+            };
+            let _ = reader_out.send(carried);
+        });
         let status = loop {
             match child.try_wait() {
                 Ok(Some(status)) => break status,
@@ -2234,13 +2254,46 @@ impl JudgeTransport for SubprocessTransport {
                 }
             }
         };
-        let _ = writer.join();
-        let body = reader.join().unwrap_or_default();
         if !status.success() {
             return Err(TransportError(
                 "the judge command exited with a failure".to_string(),
             ));
         }
+        // The command answered, so the request write and the
+        // reply read are collected against the same deadline.
+        // A writer that failed to hand the request over, and a
+        // reply channel a surviving descendant holds open past
+        // the bound, are both transport failures, and neither
+        // wait can run past the deadline. The writer is given
+        // the whole remaining bound rather than a short grace,
+        // because its thread ends as soon as the child is gone
+        // and a short grace could only refuse a consultation
+        // that succeeded.
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        match writer_in.recv_timeout(remaining) {
+            Ok(Ok(())) => {}
+            Ok(Err(exc)) => {
+                return Err(TransportError(format!(
+                    "the judge command could not be given the request, {exc}"
+                )));
+            }
+            Err(_) => {
+                return Err(TransportError(
+                    "the judge command could not be given the request".to_string(),
+                ));
+            }
+        }
+        drop(writer);
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        let body = match reader_in.recv_timeout(remaining) {
+            Ok(carried) => carried?,
+            Err(_) => {
+                return Err(TransportError(
+                    "the judge command did not answer inside the bound".to_string(),
+                ));
+            }
+        };
+        drop(reader);
         String::from_utf8(body)
             .map_err(|_| TransportError("the judge reply is not text".to_string()))
     }
@@ -2385,7 +2438,9 @@ enum Classified {
     Silence {
         risk: Option<f64>,
     },
-    Malformed,
+    Malformed {
+        risk: Option<f64>,
+    },
 }
 
 /// Classify one reply body. The confidence of a verdict is the
@@ -2399,7 +2454,7 @@ fn classify_reply(body: &str) -> Classified {
     }
     let document = match strict_parse(body) {
         Ok(document) => document,
-        Err(_) => return Classified::Malformed,
+        Err(_) => return Classified::Malformed { risk: None },
     };
     let risk = extract_risk_score(&document);
     let entry = match document
@@ -2410,11 +2465,11 @@ fn classify_reply(body: &str) -> Classified {
         Some(entry) => entry,
     };
     if entry.as_object().is_none() {
-        return Classified::Malformed;
+        return Classified::Malformed { risk };
     }
     let choice = match entry.get("choice") {
         Some(Value::Str(choice)) if VERDICT_LABELS.contains(&choice.as_str()) => choice.clone(),
-        _ => return Classified::Malformed,
+        _ => return Classified::Malformed { risk },
     };
     let probabilities = match entry.get("probabilities") {
         Some(probabilities)
@@ -2424,15 +2479,15 @@ fn classify_reply(body: &str) -> Classified {
         {
             probabilities.clone()
         }
-        _ => return Classified::Malformed,
+        _ => return Classified::Malformed { risk },
     };
     for label in VERDICT_LABELS {
         match probabilities.get(label) {
             Some(value) => match number_f64(value) {
                 Some(number) if (0.0..=1.0).contains(&number) => {}
-                _ => return Classified::Malformed,
+                _ => return Classified::Malformed { risk },
             },
-            None => return Classified::Malformed,
+            None => return Classified::Malformed { risk },
         }
     }
     let confidence_value = probabilities.get(&choice).unwrap().clone();
@@ -2643,7 +2698,7 @@ fn judge_decision(
             "silence",
             Some("silence"),
         ),
-        Classified::Malformed => referral_record(
+        Classified::Malformed { risk } => referral_record(
             judgment,
             rule,
             digest,
@@ -2654,7 +2709,10 @@ fn judge_decision(
             Value::Null,
             Value::Null,
             Value::Null,
-            Value::Null,
+            match risk {
+                Some(score) => Value::Float(score),
+                None => Value::Null,
+            },
             "malformed",
             Some("malformed"),
         ),
@@ -3095,6 +3153,18 @@ fn validate_model_record(record: &Value, line_number: usize) -> Result<Value, Lo
             "{what} carries model fields that disagree"
         )));
     }
+    if let Some(label) = verdict_text {
+        let carried = probabilities.get(label).unwrap();
+        if number_f64(confidence) != number_f64(carried) {
+            return Err(corruption(format!(
+                "{what} carries a confidence that disagrees with its probabilities"
+            )));
+        }
+    }
+    let confidence_number = match verdict_text {
+        Some(_) => number_f64(confidence),
+        None => None,
+    };
     let risk_score = model.get("risk_score").unwrap();
     if *risk_score != Value::Null && !record_number_in_range(risk_score, 1.0, 10.0) {
         return Err(corruption(format!("{what} carries a risk score of no use")));
@@ -3124,9 +3194,13 @@ fn validate_model_record(record: &Value, line_number: usize) -> Result<Value, Lo
             verdict_text.is_some()
                 && (decision_text == verdict_text.unwrap()
                     || (verdict_text == Some("escalate") && decision_text == "deny"))
+                && (verdict_text == Some("escalate")
+                    || confidence_number.is_some_and(|number| number > 0.0))
         }
         ("threshold", None) => {
-            matches!(verdict_text, Some("allow") | Some("deny")) && fallback_outcome
+            matches!(verdict_text, Some("allow") | Some("deny"))
+                && fallback_outcome
+                && confidence_number.is_some_and(|number| number < 1.0)
         }
         ("abstention", Some("abstention")) => verdict_text == Some("other") && fallback_outcome,
         ("silence", Some("silence"))

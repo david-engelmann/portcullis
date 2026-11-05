@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 use portcullis::{
     call_digest, canonical, evaluate, evaluate_with_transport, load_policy, read_log, strict_parse,
-    FixtureTransport, JudgeTransport, TransportError, Value,
+    FixtureTransport, JudgeTransport, SubprocessTransport, TransportError, Value,
 };
 
 const AT: &str = "2026-11-04T10:00:00+00:00";
@@ -558,6 +558,30 @@ fn malformed_replies_land_on_the_fallback_with_their_class_recorded() {
 }
 
 #[test]
+fn a_malformed_reply_keeps_the_risk_score_it_carried() {
+    // The verdict entry of this reply is malformed, because a
+    // probability stands out of range, but the document parses
+    // whole and its risk entry is usable, so the score stands
+    // in the record beside the malformed class.
+    let scored = decide_replying(
+        "queue",
+        &reply_body("allow", [1.5, 0.03, 0.03, 0.01], 0.5, Some(3.2)),
+    );
+    assert_eq!(model_field(&scored, "fallback"), &s("malformed"));
+    assert_eq!(model_field(&scored, "failure"), &s("malformed"));
+    assert_eq!(model_field(&scored, "risk_score"), &Value::Float(4.2));
+    // A body that cannot be read as one document at all
+    // carries no usable score answer, and its record stands
+    // null.
+    let unreadable = decide_replying(
+        "queue",
+        "{\"model\":\"jev-1.13.0\",\"answers\":{}} {\"second\":true}",
+    );
+    assert_eq!(model_field(&unreadable, "fallback"), &s("malformed"));
+    assert_eq!(model_field(&unreadable, "risk_score"), &Value::Null);
+}
+
+#[test]
 fn a_transport_failure_and_no_transport_land_on_the_fallback_with_their_classes() {
     let doc = shell_judge_policy(0.75, "queue");
     let transport = StubTransport::failing();
@@ -600,6 +624,21 @@ fn under_no_escalation_path_every_uncertain_outcome_denies() {
     );
     assert_eq!(field(&abstained, "decision"), &s("deny"));
     assert_eq!(model_field(&abstained, "fallback"), &s("abstention"));
+}
+
+#[test]
+fn a_confident_verdict_under_no_escalation_path_applies() {
+    let allowed = decide_replying("none", &allow_reply());
+    assert_eq!(field(&allowed, "decision"), &s("allow"));
+    assert_eq!(model_field(&allowed, "fallback"), &s("none"));
+    assert_eq!(model_field(&allowed, "failure"), &Value::Null);
+    let denied = decide_replying(
+        "none",
+        &reply_body("deny", [0.03, 0.93, 0.03, 0.01], 0.5, None),
+    );
+    assert_eq!(field(&denied, "decision"), &s("deny"));
+    assert_eq!(model_field(&denied, "fallback"), &s("none"));
+    assert_eq!(model_field(&denied, "failure"), &Value::Null);
 }
 
 #[test]
@@ -772,6 +811,46 @@ fn model_records_with_disagreeing_verdict_fields_are_corruption() {
 }
 
 #[test]
+fn model_records_whose_confidence_contradicts_themselves_are_corruption() {
+    let base = valid_model_record();
+    // The confidence no longer equals the probability the map
+    // carries for the chosen label.
+    assert_model_tamper_is_corruption(
+        "tamper-confidence-1",
+        tamper_model(&base, "confidence", Value::Float(0.5)),
+    );
+    // The confidence and the map agree at zero, but a verdict
+    // that decided the call as returned must have cleared a
+    // threshold above zero.
+    let zero_probabilities = Value::obj(vec![
+        ("allow", Value::Float(0.0)),
+        ("deny", Value::Float(0.5)),
+        ("escalate", Value::Float(0.3)),
+        ("other", Value::Float(0.2)),
+    ]);
+    let zeroed = tamper_model(&base, "probabilities", zero_probabilities);
+    let zeroed = tamper_model(&zeroed, "confidence", Value::Float(0.0));
+    assert_model_tamper_is_corruption("tamper-confidence-2", zeroed);
+    // A record on the threshold fallback carries a confidence
+    // of one, which no threshold at or below one lets stand
+    // below itself.
+    let below = decide_replying(
+        "queue",
+        &reply_body("allow", [0.74, 0.1, 0.1, 0.06], 0.5, None),
+    );
+    assert_eq!(model_field(&below, "fallback"), &s("threshold"));
+    let full_probabilities = Value::obj(vec![
+        ("allow", Value::Float(1.0)),
+        ("deny", Value::Float(0.1)),
+        ("escalate", Value::Float(0.1)),
+        ("other", Value::Float(0.06)),
+    ]);
+    let raised = tamper_model(&below, "probabilities", full_probabilities);
+    let raised = tamper_model(&raised, "confidence", Value::Float(1.0));
+    assert_model_tamper_is_corruption("tamper-confidence-3", raised);
+}
+
+#[test]
 fn a_line_naming_another_format_is_corruption_at_its_line() {
     let dir = temp_dir("tamper-format");
     let log_path = dir.join("audit.jsonl");
@@ -852,6 +931,48 @@ fn a_network_referral_states_the_validated_explicit_form_of_a_url_call() {
     assert!(state.contains(
         "{\"format\":\"portcullis-call/1\",\"host\":\"example.test\",\"kind\":\"network\",\"method\":\"GET\",\"port\":8080}"
     ));
+}
+
+// --- the subprocess transport ----------------------------------------------------
+
+#[test]
+fn a_judge_command_writing_past_the_reply_bound_lands_on_the_transport_fallback() {
+    let doc = shell_judge_policy(0.75, "queue");
+    let policy = load_policy(&doc).unwrap();
+    let transport = SubprocessTransport::new("head -c 2097152 /dev/zero | tr '\\0' 'x'");
+    let decision = evaluate_with_transport(
+        Some(&policy),
+        None,
+        &shell_call(&["ls"]),
+        AT,
+        Some(&transport),
+    );
+    assert_eq!(field(&decision, "decision"), &s("escalate"));
+    assert_eq!(model_field(&decision, "fallback"), &s("transport"));
+    assert_eq!(model_field(&decision, "failure"), &s("transport"));
+}
+
+#[test]
+fn a_judge_channel_held_open_past_the_bound_lands_on_the_transport_fallback() {
+    // The command prints its reply and exits at once, but a
+    // background sleep inherits the reply channel and holds it
+    // open past the bound the transport carries. The transport
+    // must record its timeout at the bound rather than wait
+    // for the channel to close.
+    let doc = shell_judge_policy(0.75, "queue");
+    let policy = load_policy(&doc).unwrap();
+    let command = format!("sleep 35 & printf '%s' '{}'", allow_reply());
+    let transport = SubprocessTransport::new(&command);
+    let decision = evaluate_with_transport(
+        Some(&policy),
+        None,
+        &shell_call(&["ls"]),
+        AT,
+        Some(&transport),
+    );
+    assert_eq!(field(&decision, "decision"), &s("escalate"));
+    assert_eq!(model_field(&decision, "fallback"), &s("transport"));
+    assert_eq!(model_field(&decision, "failure"), &s("transport"));
 }
 
 // --- the command line ------------------------------------------------------------
