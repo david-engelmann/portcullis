@@ -3286,7 +3286,7 @@ pub fn audit_log(log_path: &Path, sample_size: usize) -> Result<Value, LogReadEr
         )));
     }
     let records = read_log(log_path)?;
-    let mut ranked: Vec<(usize, f64, Value)> = Vec::new();
+    let mut ranked: Vec<(usize, f64, Value, Value)> = Vec::new();
     let mut scored_not_allowed: usize = 0;
     let mut unscored: usize = 0;
     let mut first_format: usize = 0;
@@ -3297,13 +3297,13 @@ pub fn audit_log(log_path: &Path, sample_size: usize) -> Result<Value, LogReadEr
                 let score = record
                     .get("model")
                     .and_then(|model| model.get("risk_score"))
-                    .and_then(number_f64);
+                    .and_then(|value| number_f64(value).map(|number| (value.clone(), number)));
                 match (
                     record.get("decision").and_then(|value| value.as_str()),
                     score,
                 ) {
-                    (Some("allow"), Some(number)) => {
-                        ranked.push((line, number, record.clone()));
+                    (Some("allow"), Some((score_value, number))) => {
+                        ranked.push((line, number, score_value, record.clone()));
                     }
                     (Some("deny") | Some("escalate"), Some(_)) => {
                         scored_not_allowed += 1;
@@ -3322,12 +3322,9 @@ pub fn audit_log(log_path: &Path, sample_size: usize) -> Result<Value, LogReadEr
     ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
     let returned = sample_size.min(ranked_count);
     let mut sample = Vec::with_capacity(returned);
-    for (offset, (line, _number, record)) in ranked.into_iter().take(returned).enumerate() {
-        let risk_score = record
-            .get("model")
-            .and_then(|model| model.get("risk_score"))
-            .cloned()
-            .unwrap_or(Value::Null);
+    for (offset, (line, _number, risk_score, record)) in
+        ranked.into_iter().take(returned).enumerate()
+    {
         sample.push(Value::obj(vec![
             ("rank", Value::int((offset + 1) as i64)),
             ("line", Value::int(line as i64)),
