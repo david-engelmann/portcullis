@@ -1,6 +1,6 @@
 //! The thin Python binding over the portcullis crate.
 //!
-//! The binding carries two operations and no logic of its own.
+//! The binding carries three operations and no logic of its own.
 //! The function `check` takes a policy document and a call
 //! document as ordinary Python values, converts each one into
 //! the library's document model, and hands both to the library
@@ -11,7 +11,13 @@
 //! plain dictionary in the portcullis-decision/1 shape. The
 //! function `read_log` returns the records of an audit log as a
 //! list of plain dictionaries and refuses a corrupt log with
-//! the same words the command line tool refuses it with.
+//! the same words the command line tool refuses it with. The
+//! function `audit_log` returns the sampling report of one
+//! audit log as a plain dictionary in the portcullis-audit/1
+//! shape, ranking the records the model confidently allowed
+//! by their recorded scores and counting every other record,
+//! and it writes nothing and refuses a corrupt log with the
+//! same words again.
 //!
 //! The instant is a required argument of `check`, taken as ISO
 //! 8601 text and recorded verbatim, because the library reads
@@ -507,10 +513,46 @@ fn read_log(py: Python<'_>, log: PathBuf) -> PyResult<Vec<Py<PyDict>>> {
     Ok(converted)
 }
 
+/// Audit one audit log and return the sampling report.
+///
+/// The report comes back as a plain dictionary in the
+/// portcullis-audit/1 shape, and the audit writes nothing.
+/// The sample size crosses as an integer and nothing else. A
+/// boolean refuses as a type error, because a boolean is
+/// never an integer anywhere in this gate, and a size below
+/// one raises in the caller error class with the words the
+/// library refuses it with, and a log that does not stand
+/// raises in the caller error class and a log with a bad line
+/// raises in the corruption class with the full sentence the
+/// command line tool prints for it.
+#[pyfunction]
+fn audit_log(py: Python<'_>, log: PathBuf, sample: &Bound<'_, PyAny>) -> PyResult<Py<PyDict>> {
+    if sample.is_instance_of::<PyBool>() {
+        return Err(PyTypeError::new_err("a boolean is not a sample size"));
+    }
+    let named: i64 = sample.extract()?;
+    if named < 0 {
+        return Err(CallerError::new_err(
+            "the sample size must stand at one or above",
+        ));
+    }
+    let report = py
+        .detach(|| portcullis_core::audit_log(&log, named as usize))
+        .map_err(|error| match error {
+            LogReadError::Caller(caller) => CallerError::new_err(caller.0),
+            LogReadError::Corruption(corruption) => LogCorruptionError::new_err(format!(
+                "the audit log is corrupt at line {}, {}",
+                corruption.line_number, corruption.detail
+            )),
+        })?;
+    dict_to_py(py, &report)
+}
+
 #[pymodule]
 fn _portcullis(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(check, m)?)?;
     m.add_function(wrap_pyfunction!(read_log, m)?)?;
+    m.add_function(wrap_pyfunction!(audit_log, m)?)?;
     m.add("PortcullisError", m.py().get_type::<PortcullisError>())?;
     m.add("CallerError", m.py().get_type::<CallerError>())?;
     m.add("LogAppendError", m.py().get_type::<LogAppendError>())?;
