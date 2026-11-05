@@ -1,6 +1,6 @@
 # Portcullis roadmap
 
-Portcullis guards tool calls. It is the admission gate an agent's proposed tool call passes through before the call runs, and it has closed its first three rounds. Its setup slice and its first deterministic slices come before anything in the decision model section below. That section is recorded now, before the gate is built, so the admission design grows around a stated place for judgment instead of acquiring one later by accident.
+Portcullis guards tool calls. It is the admission gate an agent's proposed tool call passes through before the call runs, and it has closed its first four rounds. Its setup slice and its first deterministic slices come before anything in the decision model section below. That section is recorded now, before the gate is built, so the admission design grows around a stated place for judgment instead of acquiring one later by accident.
 
 ## Decision models
 
@@ -26,4 +26,4 @@ Round 3 opens with the admission slice. The contract amendment PC-13 to PC-20 la
 
 ## Round 4
 
-Round 4 opens with the sampling audit slice. The contract amendment PC-21 to PC-25 lands first in the slice pull request and states the audit population, the ranking rule, the audit report, the audit surface, and the limits of the sampling slice. The library and command line and binding build follows the amendment in the same pull request, and the pins follow the build, and no live call stands anywhere in the slice.
+Round 4 opens with the sampling audit slice. The contract amendment PC-21 to PC-25 lands first in the slice pull request and states the audit population, the ranking rule, the audit report, the audit surface, and the limits of the sampling slice. The library and command line and binding build follows the amendment in the same pull request, and the pins follow the build, and no live call stands anywhere in the slice. The sampling audit slice landed in PR 10 and Round 4 closed with it.
