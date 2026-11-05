@@ -63,9 +63,12 @@
 //! command line tool prints for it. The evaluation order is
 //! the security property and lives only in the library.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use portcullis_core::{append_decision, evaluate, load_policy, LogReadError, Value};
+use portcullis_core::{
+    append_decision, evaluate, evaluate_with_transport, load_policy, JudgeTransport, LogReadError,
+    Policy, TransportError, Value,
+};
 use pyo3::create_exception;
 use pyo3::exceptions::{PyException, PyTypeError};
 use pyo3::prelude::*;
@@ -358,6 +361,68 @@ fn dict_to_py(py: Python<'_>, value: &Value) -> PyResult<Py<PyDict>> {
     Ok(dict.unbind())
 }
 
+/// A Python callable standing as a judge transport.
+///
+/// The callable receives the request document as one plain
+/// dictionary and answers with the reply body as text. A
+/// callable that raises, or that answers with a value that is
+/// not text, is a transport failure, and the library records
+/// the referral under the transport class.
+struct PyJudgeTransport {
+    callable: Py<PyAny>,
+}
+
+impl JudgeTransport for PyJudgeTransport {
+    fn consult(&self, request: &Value) -> Result<String, TransportError> {
+        Python::attach(|py| {
+            let argument = value_to_py(py, request).map_err(|_| {
+                TransportError("the request document could not cross to the transport".to_string())
+            })?;
+            let result = self
+                .callable
+                .bind(py)
+                .call1((argument,))
+                .map_err(|_| TransportError("the transport callable raised".to_string()))?;
+            result.extract::<String>().map_err(|_| {
+                TransportError(
+                    "the transport callable returned a value that is not text".to_string(),
+                )
+            })
+        })
+    }
+}
+
+/// Resolve the converted policy document into the loaded
+/// policy or the detail that stands in its place, the one
+/// resolution both branches of `check` share. A document that
+/// never crossed keeps the conversion detail the caller
+/// already holds.
+fn resolve_policy(
+    policy_document: &Option<Value>,
+    policy_detail: &Option<String>,
+) -> (Option<Policy>, Option<String>) {
+    match policy_document {
+        Some(document) => match load_policy(document) {
+            Ok(policy) => (Some(policy), None),
+            Err(error) => (None, Some(error.0)),
+        },
+        None => (None, policy_detail.clone()),
+    }
+}
+
+/// Append one decision through the library, wording a failure
+/// with the full sentence the command line tool prints for it,
+/// the one wording both branches of `check` share.
+fn append_decision_sentence(log: &Path, decision: &Value) -> Result<(), String> {
+    append_decision(log, decision).map_err(|error| {
+        format!(
+            "the decision could not be appended to the audit log at {}, {}",
+            log.display(),
+            error.0
+        )
+    })
+}
+
 /// Judge one call against one policy and record the decision.
 ///
 /// The policy document and the call document cross as Python
@@ -366,15 +431,19 @@ fn dict_to_py(py: Python<'_>, value: &Value) -> PyResult<Py<PyDict>> {
 /// back as a plain dictionary in the portcullis-decision/1
 /// shape, and it stands in the audit log at the given path
 /// before the function returns, appended by the library under
-/// its lock exactly as the command line tool appends it.
+/// its lock exactly as the command line tool appends it. The
+/// optional transport keyword hands the library a callable
+/// judge transport, and a decision the model influenced then
+/// comes back in the portcullis-decision/2 shape.
 #[pyfunction]
-#[pyo3(signature = (policy, call, log, at))]
+#[pyo3(signature = (policy, call, log, at, transport=None))]
 fn check(
     py: Python<'_>,
     policy: &Bound<'_, PyAny>,
     call: &Bound<'_, PyAny>,
     log: PathBuf,
     at: &str,
+    transport: Option<Py<PyAny>>,
 ) -> PyResult<Py<PyDict>> {
     let call_document = to_value(call, 0).map_err(|error| match error {
         ConvertError::Reader(message) => CallerError::new_err(message),
@@ -386,24 +455,29 @@ fn check(
         Err(ConvertError::Type(message)) => return Err(PyTypeError::new_err(message)),
     };
     let at_text = at.to_string();
+    if let Some(callable) = transport {
+        let (policy, detail) = resolve_policy(&policy_document, &policy_detail);
+        let wrapper = PyJudgeTransport { callable };
+        let decision = evaluate_with_transport(
+            policy.as_ref(),
+            detail.as_deref(),
+            &call_document,
+            &at_text,
+            Some(&wrapper),
+        );
+        // The consultation holds the GIL, because the callable
+        // is Python. The append after it need not, and it runs
+        // detached exactly as the append on the landed path
+        // does, so a lock wait inside it releases the GIL the
+        // same way on both paths.
+        py.detach(|| append_decision_sentence(&log, &decision))
+            .map_err(LogAppendError::new_err)?;
+        return dict_to_py(py, &decision);
+    }
     let outcome = py.detach(|| {
-        let (policy, detail) = match &policy_document {
-            Some(document) => match load_policy(document) {
-                Ok(policy) => (Some(policy), None),
-                Err(error) => (None, Some(error.0)),
-            },
-            None => (None, policy_detail.clone()),
-        };
+        let (policy, detail) = resolve_policy(&policy_document, &policy_detail);
         let decision = evaluate(policy.as_ref(), detail.as_deref(), &call_document, &at_text);
-        append_decision(&log, &decision)
-            .map(|()| decision)
-            .map_err(|error| {
-                format!(
-                    "the decision could not be appended to the audit log at {}, {}",
-                    log.display(),
-                    error.0
-                )
-            })
+        append_decision_sentence(&log, &decision).map(|()| decision)
     });
     let decision = outcome.map_err(LogAppendError::new_err)?;
     dict_to_py(py, &decision)

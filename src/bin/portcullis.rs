@@ -5,7 +5,8 @@
 //! canonical JSON line, and appends that record to the audit log
 //! before the decision counts as delivered. Exit codes carry the
 //! outcome. Zero for an allow or a rewrite, one for a deny from
-//! any source and for corruption found by the log command, and
+//! any source and for an escalate and for corruption found by
+//! the log command, and
 //! two for a caller error. The argument surface mirrors the
 //! Python argparse surface, its subcommands and required options
 //! and its acceptance of unambiguous option prefixes and of the
@@ -17,13 +18,15 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use portcullis::{
-    append_decision, canonical, evaluate, load_policy, read_log, strict_parse, CallerError,
-    LogReadError, Policy, Value,
+    append_decision, canonical, evaluate, evaluate_with_transport, load_policy, read_log,
+    strict_parse, CallerError, LogReadError, Policy, SubprocessTransport, Value,
 };
 
 const MAIN_USAGE: &str = "usage: portcullis [-h] {check,log} ...";
-const CHECK_USAGE: &str = "usage: portcullis check [-h] --policy POLICY --log LOG [call]";
+const CHECK_USAGE: &str =
+    "usage: portcullis check [-h] --policy POLICY --log LOG [--judge COMMAND] [call]";
 const LOG_USAGE: &str = "usage: portcullis log [-h] --log LOG";
+const CHECK_HELP: &str = "The judge command is an external program the check command consults for a call the policy refers. It receives the request document on its standard input as one canonical line and answers with the reply body on its standard output, under a timeout of thirty seconds the library fixes. With no judge command configured, every referred call is decided on the no transport fallback.";
 
 fn fail(message: &str) {
     eprintln!("error: {message}");
@@ -44,6 +47,16 @@ fn arg_error(usage: &str, detail: &str) -> i32 {
     eprintln!("{usage}");
     eprintln!("portcullis: error: {detail}");
     2
+}
+
+/// Print the help text of one subcommand, its usage line
+/// and, for the check command, the statement of the judge
+/// protocol that stands beside the usage.
+fn print_help(command: &str, usage: &str) {
+    let _ = print_line(&format!("{usage}\n"));
+    if command == "check" {
+        let _ = print_line(CHECK_HELP);
+    }
 }
 
 fn now_iso() -> String {
@@ -176,7 +189,12 @@ fn load_policy_file(path: &PathBuf) -> (Option<Policy>, Option<String>) {
     }
 }
 
-fn check(policy_path: PathBuf, log_path: PathBuf, call_path: Option<PathBuf>) -> i32 {
+fn check(
+    policy_path: PathBuf,
+    log_path: PathBuf,
+    judge_command: Option<String>,
+    call_path: Option<PathBuf>,
+) -> i32 {
     let call_text = match read_call_text(&call_path) {
         Ok(text) => text,
         Err(exc) => {
@@ -193,7 +211,19 @@ fn check(policy_path: PathBuf, log_path: PathBuf, call_path: Option<PathBuf>) ->
     };
     let (policy, policy_error) = load_policy_file(&policy_path);
     let at = now_iso();
-    let decision = evaluate(policy.as_ref(), policy_error.as_deref(), &document, &at);
+    let decision = match &judge_command {
+        Some(command) => {
+            let transport = SubprocessTransport::new(command);
+            evaluate_with_transport(
+                policy.as_ref(),
+                policy_error.as_deref(),
+                &document,
+                &at,
+                Some(&transport),
+            )
+        }
+        None => evaluate(policy.as_ref(), policy_error.as_deref(), &document, &at),
+    };
     if let Err(exc) = append_decision(&log_path, &decision) {
         fail(&format!(
             "the decision could not be appended to the audit log at {}, {}",
@@ -239,6 +269,7 @@ fn log(log_path: PathBuf) -> i32 {
 struct ParsedArgs {
     policy: Option<PathBuf>,
     log: Option<PathBuf>,
+    judge: Option<String>,
     call: Option<PathBuf>,
 }
 
@@ -296,13 +327,14 @@ fn parse_subcommand(command: &str, args: &[OsString]) -> Result<ParsedArgs, (Str
         LOG_USAGE
     };
     let known: &[&str] = if command == "check" {
-        &["--policy", "--log", "--help"]
+        &["--policy", "--log", "--judge", "--help"]
     } else {
         &["--log", "--help"]
     };
     let mut parsed = ParsedArgs {
         policy: None,
         log: None,
+        judge: None,
         call: None,
     };
     let mut positional_only = false;
@@ -316,7 +348,7 @@ fn parse_subcommand(command: &str, args: &[OsString]) -> Result<ParsedArgs, (Str
             continue;
         }
         if !positional_only && (token_text == "-h" || token_text == "--help") {
-            let _ = print_line(&format!("{usage}\n"));
+            print_help(command, usage);
             return Err((String::new(), 0));
         }
         if !positional_only && token_text.starts_with("--") {
@@ -326,7 +358,7 @@ fn parse_subcommand(command: &str, args: &[OsString]) -> Result<ParsedArgs, (Str
                 Err(detail) => return Err((detail, 2)),
             };
             if option == "--help" {
-                let _ = print_line(&format!("{usage}\n"));
+                print_help(command, usage);
                 return Err((String::new(), 0));
             }
             let value = match inline {
@@ -343,6 +375,7 @@ fn parse_subcommand(command: &str, args: &[OsString]) -> Result<ParsedArgs, (Str
             };
             match option {
                 "--policy" => parsed.policy = Some(value),
+                "--judge" => parsed.judge = Some(value.to_string_lossy().into_owned()),
                 _ => parsed.log = Some(value),
             }
             index += 1;
@@ -391,7 +424,12 @@ fn run() -> i32 {
         "check" | "log" => match parse_subcommand(&first, &args[1..]) {
             Ok(parsed) => {
                 if first == "check" {
-                    check(parsed.policy.unwrap(), parsed.log.unwrap(), parsed.call)
+                    check(
+                        parsed.policy.unwrap(),
+                        parsed.log.unwrap(),
+                        parsed.judge,
+                        parsed.call,
+                    )
                 } else {
                     log(parsed.log.unwrap())
                 }
