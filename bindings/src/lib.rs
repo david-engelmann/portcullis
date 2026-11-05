@@ -517,27 +517,47 @@ fn read_log(py: Python<'_>, log: PathBuf) -> PyResult<Vec<Py<PyDict>>> {
 ///
 /// The report comes back as a plain dictionary in the
 /// portcullis-audit/1 shape, and the audit writes nothing.
-/// The sample size crosses as an integer and nothing else. A
-/// boolean refuses as a type error, because a boolean is
-/// never an integer anywhere in this gate, and a size below
-/// one raises in the caller error class with the words the
-/// library refuses it with, and a log that does not stand
-/// raises in the caller error class and a log with a bad line
-/// raises in the corruption class with the full sentence the
-/// command line tool prints for it.
+/// The sample size is compared as a Python integer before it
+/// is converted, so no integer a caller can name escapes the
+/// standing family. A boolean refuses as a type error,
+/// because a boolean is never an integer anywhere in this
+/// gate. A size below one raises in the caller error class
+/// with the words the library refuses it with, and a size
+/// above the ranked population returns the whole population
+/// under the clamp of the audit. A size above the range a
+/// machine word holds returns the whole population the same
+/// way, with the named size standing in the report as named.
+/// A log that does not stand raises in the caller error
+/// class and a log with a bad line raises in the corruption
+/// class with the full sentence the command line tool prints
+/// for it.
 #[pyfunction]
 fn audit_log(py: Python<'_>, log: PathBuf, sample: &Bound<'_, PyAny>) -> PyResult<Py<PyDict>> {
     if sample.is_instance_of::<PyBool>() {
         return Err(PyTypeError::new_err("a boolean is not a sample size"));
     }
-    let named: i64 = sample.extract()?;
-    if named < 0 {
-        return Err(CallerError::new_err(
-            "the sample size must stand at one or above",
-        ));
-    }
+    let above_word = if sample.is_instance_of::<PyInt>() {
+        if sample
+            .rich_compare(1, pyo3::basic::CompareOp::Lt)?
+            .is_truthy()?
+        {
+            return Err(CallerError::new_err(
+                "the sample size must stand at one or above",
+            ));
+        }
+        sample
+            .rich_compare(usize::MAX, pyo3::basic::CompareOp::Gt)?
+            .is_truthy()?
+    } else {
+        false
+    };
+    let named = if above_word {
+        usize::MAX
+    } else {
+        sample.extract::<usize>()?
+    };
     let report = py
-        .detach(|| portcullis_core::audit_log(&log, named as usize))
+        .detach(|| portcullis_core::audit_log(&log, named))
         .map_err(|error| match error {
             LogReadError::Caller(caller) => CallerError::new_err(caller.0),
             LogReadError::Corruption(corruption) => LogCorruptionError::new_err(format!(
@@ -545,7 +565,11 @@ fn audit_log(py: Python<'_>, log: PathBuf, sample: &Bound<'_, PyAny>) -> PyResul
                 corruption.line_number, corruption.detail
             )),
         })?;
-    dict_to_py(py, &report)
+    let dict = dict_to_py(py, &report)?;
+    if above_word {
+        dict.bind(py).set_item("requested", sample)?;
+    }
+    Ok(dict)
 }
 
 #[pymodule]

@@ -733,6 +733,30 @@ def test_audit_log_returns_the_report_over_a_built_log(tmp_path):
     assert str(refused.value) == "the sample size must stand at one or above"
 
 
+def test_audit_log_clamps_sizes_beyond_the_machine_range(tmp_path):
+    log = tmp_path / "audit.jsonl"
+    call = {"format": "portcullis-call/1", "kind": "shell", "argv": ["ls"]}
+    portcullis.check(
+        judge_policy(), call, log, AT, transport=lambda request: scored_reply(3.2)
+    )
+    portcullis.check(
+        judge_policy(), call, log, AT, transport=lambda request: scored_reply(8.0)
+    )
+    portcullis.check(
+        fixture("policy-full.json"), fixture("call-shell-allow.json"), log, AT
+    )
+    for size in [2**63, 2**64]:
+        report = portcullis.audit_log(log, size)
+        assert report["requested"] == size
+        assert report["returned"] == 2
+        assert report["counts"]["ranked"] == 2
+        assert [entry["line"] for entry in report["sample"]] == [2, 1]
+        assert [entry["risk_score"] for entry in report["sample"]] == [9.0, 4.2]
+    with pytest.raises(portcullis.CallerError) as refused:
+        portcullis.audit_log(log, -(2**63))
+    assert str(refused.value) == "the sample size must stand at one or above"
+
+
 def test_audit_log_raises_the_corruption_class_over_a_corrupt_log(tmp_path):
     log = tmp_path / "audit.jsonl"
     portcullis.check(
