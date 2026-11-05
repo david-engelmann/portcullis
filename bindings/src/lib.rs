@@ -63,11 +63,11 @@
 //! command line tool prints for it. The evaluation order is
 //! the security property and lives only in the library.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use portcullis_core::{
     append_decision, evaluate, evaluate_with_transport, load_policy, JudgeTransport, LogReadError,
-    TransportError, Value,
+    Policy, TransportError, Value,
 };
 use pyo3::create_exception;
 use pyo3::exceptions::{PyException, PyTypeError};
@@ -392,6 +392,37 @@ impl JudgeTransport for PyJudgeTransport {
     }
 }
 
+/// Resolve the converted policy document into the loaded
+/// policy or the detail that stands in its place, the one
+/// resolution both branches of `check` share. A document that
+/// never crossed keeps the conversion detail the caller
+/// already holds.
+fn resolve_policy(
+    policy_document: &Option<Value>,
+    policy_detail: &Option<String>,
+) -> (Option<Policy>, Option<String>) {
+    match policy_document {
+        Some(document) => match load_policy(document) {
+            Ok(policy) => (Some(policy), None),
+            Err(error) => (None, Some(error.0)),
+        },
+        None => (None, policy_detail.clone()),
+    }
+}
+
+/// Append one decision through the library, wording a failure
+/// with the full sentence the command line tool prints for it,
+/// the one wording both branches of `check` share.
+fn append_decision_sentence(log: &Path, decision: &Value) -> Result<(), String> {
+    append_decision(log, decision).map_err(|error| {
+        format!(
+            "the decision could not be appended to the audit log at {}, {}",
+            log.display(),
+            error.0
+        )
+    })
+}
+
 /// Judge one call against one policy and record the decision.
 ///
 /// The policy document and the call document cross as Python
@@ -425,13 +456,7 @@ fn check(
     };
     let at_text = at.to_string();
     if let Some(callable) = transport {
-        let (policy, detail) = match &policy_document {
-            Some(document) => match load_policy(document) {
-                Ok(policy) => (Some(policy), None),
-                Err(error) => (None, Some(error.0)),
-            },
-            None => (None, policy_detail.clone()),
-        };
+        let (policy, detail) = resolve_policy(&policy_document, &policy_detail);
         let wrapper = PyJudgeTransport { callable };
         let decision = evaluate_with_transport(
             policy.as_ref(),
@@ -440,33 +465,19 @@ fn check(
             &at_text,
             Some(&wrapper),
         );
-        append_decision(&log, &decision).map_err(|error| {
-            LogAppendError::new_err(format!(
-                "the decision could not be appended to the audit log at {}, {}",
-                log.display(),
-                error.0
-            ))
-        })?;
+        // The consultation holds the GIL, because the callable
+        // is Python. The append after it need not, and it runs
+        // detached exactly as the append on the landed path
+        // does, so a lock wait inside it releases the GIL the
+        // same way on both paths.
+        py.detach(|| append_decision_sentence(&log, &decision))
+            .map_err(LogAppendError::new_err)?;
         return dict_to_py(py, &decision);
     }
     let outcome = py.detach(|| {
-        let (policy, detail) = match &policy_document {
-            Some(document) => match load_policy(document) {
-                Ok(policy) => (Some(policy), None),
-                Err(error) => (None, Some(error.0)),
-            },
-            None => (None, policy_detail.clone()),
-        };
+        let (policy, detail) = resolve_policy(&policy_document, &policy_detail);
         let decision = evaluate(policy.as_ref(), detail.as_deref(), &call_document, &at_text);
-        append_decision(&log, &decision)
-            .map(|()| decision)
-            .map_err(|error| {
-                format!(
-                    "the decision could not be appended to the audit log at {}, {}",
-                    log.display(),
-                    error.0
-                )
-            })
+        append_decision_sentence(&log, &decision).map(|()| decision)
     });
     let decision = outcome.map_err(LogAppendError::new_err)?;
     dict_to_py(py, &decision)

@@ -26,6 +26,7 @@ const MAIN_USAGE: &str = "usage: portcullis [-h] {check,log} ...";
 const CHECK_USAGE: &str =
     "usage: portcullis check [-h] --policy POLICY --log LOG [--judge COMMAND] [call]";
 const LOG_USAGE: &str = "usage: portcullis log [-h] --log LOG";
+const CHECK_HELP: &str = "The judge command is an external program the check command consults for a call the policy refers. It receives the request document on its standard input as one canonical line and answers with the reply body on its standard output, under a timeout of thirty seconds the library fixes. With no judge command configured, every referred call is decided on the no transport fallback.";
 
 fn fail(message: &str) {
     eprintln!("error: {message}");
@@ -46,6 +47,16 @@ fn arg_error(usage: &str, detail: &str) -> i32 {
     eprintln!("{usage}");
     eprintln!("portcullis: error: {detail}");
     2
+}
+
+/// Print the help text of one subcommand, its usage line
+/// and, for the check command, the statement of the judge
+/// protocol that stands beside the usage.
+fn print_help(command: &str, usage: &str) {
+    let _ = print_line(&format!("{usage}\n"));
+    if command == "check" {
+        let _ = print_line(CHECK_HELP);
+    }
 }
 
 fn now_iso() -> String {
@@ -337,7 +348,7 @@ fn parse_subcommand(command: &str, args: &[OsString]) -> Result<ParsedArgs, (Str
             continue;
         }
         if !positional_only && (token_text == "-h" || token_text == "--help") {
-            let _ = print_line(&format!("{usage}\n"));
+            print_help(command, usage);
             return Err((String::new(), 0));
         }
         if !positional_only && token_text.starts_with("--") {
@@ -347,7 +358,7 @@ fn parse_subcommand(command: &str, args: &[OsString]) -> Result<ParsedArgs, (Str
                 Err(detail) => return Err((detail, 2)),
             };
             if option == "--help" {
-                let _ = print_line(&format!("{usage}\n"));
+                print_help(command, usage);
                 return Err((String::new(), 0));
             }
             let value = match inline {

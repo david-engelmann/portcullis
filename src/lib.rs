@@ -2211,13 +2211,13 @@ impl JudgeTransport for SubprocessTransport {
             std::time::Instant::now() + std::time::Duration::from_secs(JUDGE_TIMEOUT_SECONDS);
         let mut stdin = child.stdin.take().unwrap();
         let (writer_out, writer_in) = std::sync::mpsc::channel();
-        let writer = std::thread::spawn(move || {
+        let _writer = std::thread::spawn(move || {
             let written = stdin.write_all(&line).and_then(|_| stdin.flush());
             let _ = writer_out.send(written);
         });
         let mut stdout = child.stdout.take().unwrap();
         let (reader_out, reader_in) = std::sync::mpsc::channel();
-        let reader = std::thread::spawn(move || {
+        let _reader = std::thread::spawn(move || {
             let mut body = Vec::new();
             let read = stdout
                 .by_ref()
@@ -2283,17 +2283,15 @@ impl JudgeTransport for SubprocessTransport {
                 ));
             }
         }
-        drop(writer);
         let remaining = deadline.saturating_duration_since(std::time::Instant::now());
         let body = match reader_in.recv_timeout(remaining) {
             Ok(carried) => carried?,
             Err(_) => {
                 return Err(TransportError(
-                    "the judge command did not answer inside the bound".to_string(),
+                    "the judge reply channel did not close inside the bound".to_string(),
                 ));
             }
         };
-        drop(reader);
         String::from_utf8(body)
             .map_err(|_| TransportError("the judge reply is not text".to_string()))
     }
@@ -2509,57 +2507,105 @@ fn classify_reply(body: &str) -> Classified {
     }
 }
 
-/// One model decision record, in the second format, carrying
-/// the eight landed fields and the model field.
-#[allow(clippy::too_many_arguments)]
-fn referral_record(
-    judgment: &Judgment,
-    rule: &Rule,
-    digest: &str,
-    at: &str,
+/// The referral one record speaks of, grouped once so the
+/// record constructors take the shared inputs as one value
+/// rather than repeating them at every call site.
+struct ReferralContext<'a> {
+    judgment: &'a Judgment,
+    rule: &'a Rule,
+    digest: &'a str,
+    at: &'a str,
     interpreter: bool,
-    request_digest: &str,
-    outcome: &str,
+    request_digest: &'a str,
+}
+
+/// The decided outcome of one referral and the model field
+/// values its record carries, grouped so the record
+/// constructor takes the shape of the landed decision
+/// constructor rather than a long argument list of its own.
+struct ReferralParts<'a> {
+    outcome: &'a str,
     verdict: Value,
     confidence: Value,
     probabilities: Value,
     risk_score: Value,
-    fallback: &str,
-    failure: Option<&str>,
-) -> Value {
+    fallback: &'a str,
+    failure: Option<&'a str>,
+}
+
+/// One model decision record, in the second format, carrying
+/// the eight landed fields and the model field.
+fn referral_record(context: &ReferralContext<'_>, parts: ReferralParts<'_>) -> Value {
     let model = Value::obj(vec![
-        ("model", Value::text(&judgment.model)),
-        ("verdict", verdict),
-        ("confidence", confidence),
-        ("probabilities", probabilities),
-        ("risk_score", risk_score),
-        ("fallback", Value::text(fallback)),
+        ("model", Value::text(&context.judgment.model)),
+        ("verdict", parts.verdict),
+        ("confidence", parts.confidence),
+        ("probabilities", parts.probabilities),
+        ("risk_score", parts.risk_score),
+        ("fallback", Value::text(parts.fallback)),
         (
             "failure",
-            match failure {
+            match parts.failure {
                 Some(name) => Value::text(name),
                 None => Value::Null,
             },
         ),
-        ("request_digest", Value::text(request_digest)),
+        ("request_digest", Value::text(context.request_digest)),
     ]);
     Value::obj(vec![
         ("format", Value::text(DECISION_FORMAT_2)),
-        ("at", Value::text(at)),
-        ("call_digest", Value::text(digest)),
-        ("decision", Value::text(outcome)),
+        ("at", Value::text(context.at)),
+        ("call_digest", Value::text(context.digest)),
+        ("decision", Value::text(parts.outcome)),
         (
             "source",
             Value::obj(vec![
                 ("type", Value::text("model")),
-                ("rule", Value::text(&rule.id)),
+                ("rule", Value::text(&context.rule.id)),
             ]),
         ),
-        ("reason", Value::text(&rule.reason)),
-        ("interpreter", Value::Bool(interpreter)),
+        ("reason", Value::text(&context.rule.reason)),
+        ("interpreter", Value::Bool(context.interpreter)),
         ("rewritten_call", Value::Null),
         ("model", model),
     ])
+}
+
+/// The recorded risk score value of one referral, the score
+/// on its one to ten scale, or null when the reply carried no
+/// usable score answer.
+fn risk_score_value(risk: Option<f64>) -> Value {
+    match risk {
+        Some(score) => Value::Float(score),
+        None => Value::Null,
+    }
+}
+
+/// The record of a referral that landed on its fallback
+/// outcome under one of the failure classes of the contract.
+/// The class names both the fallback and the failure, and the
+/// verdict and the confidence and the probabilities stand
+/// null, because no verdict was obtained. The risk score is
+/// the one the reply carried, where a reply stood to carry
+/// one at all.
+fn referral_failure_record(
+    context: &ReferralContext<'_>,
+    fallback_outcome: &str,
+    class: &str,
+    risk: Option<f64>,
+) -> Value {
+    referral_record(
+        context,
+        ReferralParts {
+            outcome: fallback_outcome,
+            verdict: Value::Null,
+            confidence: Value::Null,
+            probabilities: Value::Null,
+            risk_score: risk_score_value(risk),
+            fallback: class,
+            failure: Some(class),
+        },
+    )
 }
 
 /// Decide one referred call. The transport is consulted once,
@@ -2583,44 +2629,24 @@ fn judge_decision(
     } else {
         "deny"
     };
+    let context = ReferralContext {
+        judgment,
+        rule,
+        digest,
+        at,
+        interpreter,
+        request_digest: &request_digest,
+    };
     let transport = match transport {
         None => {
-            return referral_record(
-                judgment,
-                rule,
-                digest,
-                at,
-                interpreter,
-                &request_digest,
-                fallback_outcome,
-                Value::Null,
-                Value::Null,
-                Value::Null,
-                Value::Null,
-                "no transport",
-                Some("no transport"),
-            );
+            return referral_failure_record(&context, fallback_outcome, "no transport", None);
         }
         Some(transport) => transport,
     };
     let body = match transport.consult(&request) {
         Ok(body) => body,
         Err(_) => {
-            return referral_record(
-                judgment,
-                rule,
-                digest,
-                at,
-                interpreter,
-                &request_digest,
-                fallback_outcome,
-                Value::Null,
-                Value::Null,
-                Value::Null,
-                Value::Null,
-                "transport",
-                Some("transport"),
-            );
+            return referral_failure_record(&context, fallback_outcome, "transport", None);
         }
     };
     match classify_reply(&body) {
@@ -2639,22 +2665,16 @@ fn judge_decision(
                 (fallback_outcome, "threshold")
             };
             referral_record(
-                judgment,
-                rule,
-                digest,
-                at,
-                interpreter,
-                &request_digest,
-                outcome,
-                Value::text(&label),
-                confidence_value,
-                probabilities,
-                match risk {
-                    Some(score) => Value::Float(score),
-                    None => Value::Null,
+                &context,
+                ReferralParts {
+                    outcome,
+                    verdict: Value::text(&label),
+                    confidence: confidence_value,
+                    probabilities,
+                    risk_score: risk_score_value(risk),
+                    fallback,
+                    failure: None,
                 },
-                fallback,
-                None,
             )
         }
         Classified::Abstention {
@@ -2663,59 +2683,23 @@ fn judge_decision(
             risk,
             ..
         } => referral_record(
-            judgment,
-            rule,
-            digest,
-            at,
-            interpreter,
-            &request_digest,
-            fallback_outcome,
-            Value::text("other"),
-            confidence_value,
-            probabilities,
-            match risk {
-                Some(score) => Value::Float(score),
-                None => Value::Null,
+            &context,
+            ReferralParts {
+                outcome: fallback_outcome,
+                verdict: Value::text("other"),
+                confidence: confidence_value,
+                probabilities,
+                risk_score: risk_score_value(risk),
+                fallback: "abstention",
+                failure: Some("abstention"),
             },
-            "abstention",
-            Some("abstention"),
         ),
-        Classified::Silence { risk } => referral_record(
-            judgment,
-            rule,
-            digest,
-            at,
-            interpreter,
-            &request_digest,
-            fallback_outcome,
-            Value::Null,
-            Value::Null,
-            Value::Null,
-            match risk {
-                Some(score) => Value::Float(score),
-                None => Value::Null,
-            },
-            "silence",
-            Some("silence"),
-        ),
-        Classified::Malformed { risk } => referral_record(
-            judgment,
-            rule,
-            digest,
-            at,
-            interpreter,
-            &request_digest,
-            fallback_outcome,
-            Value::Null,
-            Value::Null,
-            Value::Null,
-            match risk {
-                Some(score) => Value::Float(score),
-                None => Value::Null,
-            },
-            "malformed",
-            Some("malformed"),
-        ),
+        Classified::Silence { risk } => {
+            referral_failure_record(&context, fallback_outcome, "silence", risk)
+        }
+        Classified::Malformed { risk } => {
+            referral_failure_record(&context, fallback_outcome, "malformed", risk)
+        }
     }
 }
 
