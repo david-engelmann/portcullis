@@ -83,6 +83,8 @@ exit 1
 
 A rule with the judge action refers the calls it matches to the model the policy judgment block names. The check command consults an external judge program through its --judge option. The program receives the request document on its standard input and answers with the reply body on its standard output. The example answers with a recorded reply held in a file, so the run needs no model access and no network.
 
+Save the three documents below as judge-policy.json, call-judge.json, and reply.json in one directory, and run the commands of this section from that directory.
+
 The policy holds one judge rule for shell calls and a judgment block naming the model, its threshold, and its escalation.
 
 ```
@@ -129,10 +131,10 @@ exit 0
 
 The decision record is a portcullis-decision/2 record. Its model block carries the verdict, the confidence read from the probabilities map of the reply, and the recorded risk score, and its source names the referring rule.
 
-With no judge program configured, a referred call lands on the no transport fallback and escalates, and the command exits 1.
+With no judge program configured, a referred call lands on the no transport fallback and escalates, and the command exits 1. The run below logs to its own file, apart from the log the audit example reads.
 
 ```
-portcullis check --policy judge-policy.json --log audit.jsonl call-judge.json
+portcullis check --policy judge-policy.json --log nojudge.jsonl call-judge.json
 ```
 
 ```
@@ -167,7 +169,7 @@ python3 -m venv .venv
 .venv/bin/maturin develop --manifest-path bindings/Cargo.toml
 ```
 
-The script below decides the same rm call the quickstart denies, through the library rather than the binary, and reads the log back.
+The script below decides the same rm call the quickstart denies, through the library rather than the binary, and reads the log back. The count it prints is one, because the log starts empty and the script appends its decision before it reads.
 
 ```
 import json
