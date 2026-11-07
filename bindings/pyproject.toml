@@ -5,7 +5,7 @@ build-backend = "maturin"
 [project]
 name = "portcullis"
 version = "0.1.0"
-description = "A local tool call gate that decides whether a proposed tool call may proceed"
+description = "A local tool-call firewall that sits between an agent and your machine, allowing, denying, or rewriting shell, file, and network calls by rule, and referring the calls its rules leave open to a decision model."
 license = { text = "MIT" }
 requires-python = ">=3.9"
 
