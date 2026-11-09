@@ -27,3 +27,7 @@ Round 3 opens with the admission slice. The contract amendment PC-13 to PC-20 la
 ## Round 4
 
 Round 4 opens with the sampling audit slice. The contract amendment PC-21 to PC-25 lands first in the slice pull request and states the audit population, the ranking rule, the audit report, the audit surface, and the limits of the sampling slice. The library and command line and binding build follows the amendment in the same pull request, and the pins follow the build, and no live call stands anywhere in the slice. The sampling audit slice landed in PR 10 and Round 4 closed with it.
+
+## Round 5
+
+Round 5 opens with the denial reservation slice. No contract amendment stands in the slice, on the falsification test the design ran against PC-13 to PC-20. The verdict instructions gain two sentences after the landed reservation sentence, the first enumerating the shapes that are themselves the harm and ordering them against the boundary doctrine, the second directing the judge to state the deny probability the shape earns rather than dividing it with escalate. The recorded corpus is re-derived in one window over the same constructions and replaced in place, and a fresh landing evaluation runs the whole corpus on fresh documents under readings fixed in advance. The denial reservation slice landed in PR 13 and Round 5 closed with it.
