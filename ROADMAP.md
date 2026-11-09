@@ -1,6 +1,6 @@
 # Portcullis roadmap
 
-Portcullis guards tool calls. It is the admission gate an agent's proposed tool call passes through before the call runs, and it has closed its first four rounds. Its setup slice and its first deterministic slices come before anything in the decision model section below. That section is recorded now, before the gate is built, so the admission design grows around a stated place for judgment instead of acquiring one later by accident.
+Portcullis guards tool calls. It is the admission gate an agent's proposed tool call passes through before the call runs, and it has closed its first five rounds. Its setup slice and its first deterministic slices come before anything in the decision model section below. That section is recorded now, before the gate is built, so the admission design grows around a stated place for judgment instead of acquiring one later by accident.
 
 ## Decision models
 

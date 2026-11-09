@@ -131,6 +131,8 @@ exit 0
 
 The decision record is a portcullis-decision/2 record. Its model block carries the verdict, the confidence read from the probabilities map of the reply, and the recorded risk score, and its source names the referring rule.
 
+Since Round 5 the instructions the model reads carry two further sentences of denial doctrine. A call that is itself the harm, one that destroys data or overwrites it past recovery, reads a credential or key file, sends project material to a destination outside the project, or runs code fetched from an address the state does not name as approved, is stated to be a denial and not an escalation, whatever boundary question it also raises. On a call of one of those shapes the model is told to state the deny probability the shape earns rather than dividing it with escalate, because a deny verdict divided with escalate lands below the threshold the policy sets and the call is escalated to a human instead of refused.
+
 With no judge program configured, a referred call lands on the no transport fallback and escalates, and the command exits 1. The run below logs to its own file, apart from the log the audit example reads.
 
 ```
@@ -201,7 +203,7 @@ The contract lives in CONTRACT.md. Obligations S1 to S5 stand as the setup recor
 
 The continuous integration workflow runs the full suite and the Python binding smoke on every push and pull request, and both checks are required on main.
 
-Closed perfection rounds are 4 of 100. A round counts only when a full cycle of work and audit and review and red team and approval has closed, and seeding and setup are not rounds.
+Closed perfection rounds are 5 of 100. A round counts only when a full cycle of work and audit and review and red team and approval has closed, and seeding and setup are not rounds.
 
 The remote seed was verified on 2026-11-02 against the staged seed, and its commit is 46b1cafe58e78f9b0820b81800b6727cc2ffae60, a parentless commit holding exactly README.md and LICENSE and .gitignore.
 
