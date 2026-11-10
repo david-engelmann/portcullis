@@ -199,11 +199,11 @@ The gate, the referral, and the sampling audit all work today. Portcullis checks
 
 Portcullis executes nothing and wires into no harness. A harness or a person presents each call and acts on each decision, and no model access is bundled, so a referring policy needs a judge program from the operator or a transport handed to the binding.
 
-The contract lives in CONTRACT.md. Obligations S1 to S5 stand as the setup record. Obligations PC-1 to PC-12 state the behaviour of the gate, PC-13 to PC-20 state the behaviour of the referral and the judgment, and PC-21 to PC-25 state the behaviour of the sampling audit.
+The contract lives in CONTRACT.md. Obligations S1 to S5 stand as the setup record. Obligations PC-1 to PC-12 state the behaviour of the gate, PC-13 to PC-20 state the behaviour of the referral and the judgment, PC-21 to PC-25 state the behaviour of the sampling audit, and PC-26 states the interior of the referral.
 
 The continuous integration workflow runs the full suite and the Python binding smoke on every push and pull request, and both checks are required on main.
 
-Closed perfection rounds are 5 of 100. A round counts only when a full cycle of work and audit and review and red team and approval has closed, and seeding and setup are not rounds.
+Closed perfection rounds are 6 of 100. A round counts only when a full cycle of work and audit and review and red team and approval has closed, and seeding and setup are not rounds.
 
 The remote seed was verified on 2026-11-02 against the staged seed, and its commit is 46b1cafe58e78f9b0820b81800b6727cc2ffae60, a parentless commit holding exactly README.md and LICENSE and .gitignore.
 
