@@ -451,8 +451,9 @@ fn the_first_of_a_judge_rule_and_an_allow_rule_decides() {
     assert_eq!(transport.consulted(), 1);
     assert_eq!(
         field(&decision, "source"),
-        &Value::obj(vec![("type", s("rule")), ("rule", s("judge-first"))])
+        &Value::obj(vec![("type", s("model")), ("rule", s("judge-first"))])
     );
+    assert_eq!(field(&decision, "reason"), &s("the first judge reason"));
     let requests = transport.requests.borrow();
     let state = field(&requests[0], "state").as_str().unwrap();
     assert!(state.contains("The referring rule is judge-first."));
