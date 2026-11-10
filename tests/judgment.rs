@@ -537,6 +537,22 @@ fn silence_in_each_of_its_shapes_lands_on_the_fallback_and_never_allows() {
     assert_eq!(model_field(&decision, "failure"), &s("silence"));
     assert_eq!(model_field(&decision, "verdict"), &Value::Null);
     assert_eq!(model_field(&decision, "risk_score"), &Value::Float(5.0));
+
+    let not_an_object = "\"not an object\"";
+    let decision = decide_replying("queue", not_an_object);
+    assert_eq!(field(&decision, "decision"), &s("escalate"));
+    assert_eq!(model_field(&decision, "fallback"), &s("silence"));
+    assert_eq!(model_field(&decision, "failure"), &s("silence"));
+    assert_eq!(model_field(&decision, "verdict"), &Value::Null);
+    assert_eq!(model_field(&decision, "risk_score"), &Value::Null);
+
+    let answers_not_an_object = "{\"model\":\"jev-1.13.0\",\"answers\":42}";
+    let decision = decide_replying("queue", answers_not_an_object);
+    assert_eq!(field(&decision, "decision"), &s("escalate"));
+    assert_eq!(model_field(&decision, "fallback"), &s("silence"));
+    assert_eq!(model_field(&decision, "failure"), &s("silence"));
+    assert_eq!(model_field(&decision, "verdict"), &Value::Null);
+    assert_eq!(model_field(&decision, "risk_score"), &Value::Null);
 }
 
 #[test]
@@ -1359,7 +1375,11 @@ use sha2::{Digest, Sha256};
 /// the two pins cannot disagree about what the exhibit
 /// says.
 fn exhibit_sections() -> Vec<(String, Vec<String>)> {
-    let text = std::fs::read_to_string(root().join("EXHIBIT.md")).unwrap();
+    exhibit_sections_from(&root().join("EXHIBIT.md"))
+}
+
+fn exhibit_sections_from(path: &std::path::Path) -> Vec<(String, Vec<String>)> {
+    let text = std::fs::read_to_string(path).unwrap();
     let mut sections: Vec<(String, Vec<String>)> = Vec::new();
     for line in text.lines() {
         if let Some(name) = line.strip_prefix("### ") {
@@ -1545,6 +1565,32 @@ fn the_exhibit_prints_the_doctrine_texts_the_builder_sends() {
     let state = field(request, "state").as_str().unwrap();
     let closing = exhibit_text(&sections, "The state closing text");
     assert_eq!(state.rsplit("\n\n").next().unwrap(), closing.as_str());
+    // The scratch copy arm the exhibit paragraph of PC-26
+    // names. One text of a scratch copy of the exhibit
+    // stands amended, the amended copy is read back through
+    // the same extraction the pin above performs, and the
+    // comparison of that text against the text the builder
+    // placed in the built request must fail there, so a
+    // regression that compared the exhibit against itself
+    // would turn this pin red.
+    let scratch = std::env::temp_dir().join(format!(
+        "portcullis-judgment-{}-exhibit-scratch",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&scratch).unwrap();
+    let amended_path = scratch.join("EXHIBIT.md");
+    let exhibit_source = std::fs::read_to_string(root().join("EXHIBIT.md")).unwrap();
+    let amended_source = exhibit_source.replacen(instructions.as_str(), "Amended instructions.", 1);
+    assert_ne!(amended_source, exhibit_source);
+    std::fs::write(&amended_path, &amended_source).unwrap();
+    let amended_sections = exhibit_sections_from(&amended_path);
+    let amended_instructions = exhibit_text(&amended_sections, "The verdict instructions");
+    assert_ne!(
+        field(verdict, "instructions").as_str().unwrap(),
+        amended_instructions.as_str(),
+        "an amended exhibit text must fail the comparison against the built request"
+    );
+    std::fs::remove_dir_all(&scratch).unwrap();
 }
 
 #[test]
