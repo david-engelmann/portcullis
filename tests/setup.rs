@@ -426,6 +426,10 @@ fn contract_obligations_carry_their_substance() {
         "0 of 100 until a full cycle",
         "no file carries a real trace or a real transcript or a real name",
         "SHA-256 digest of the part above the marked line",
+        "exactly the keys model and questions and state",
+        "in the order the builder consumes them",
+        "the probabilities entry of the chosen label",
+        "the exhibit file EXHIBIT.md",
     ] {
         assert!(text.contains(phrase), "{phrase}");
     }

@@ -537,6 +537,22 @@ fn silence_in_each_of_its_shapes_lands_on_the_fallback_and_never_allows() {
     assert_eq!(model_field(&decision, "failure"), &s("silence"));
     assert_eq!(model_field(&decision, "verdict"), &Value::Null);
     assert_eq!(model_field(&decision, "risk_score"), &Value::Float(5.0));
+
+    let not_an_object = "\"not an object\"";
+    let decision = decide_replying("queue", not_an_object);
+    assert_eq!(field(&decision, "decision"), &s("escalate"));
+    assert_eq!(model_field(&decision, "fallback"), &s("silence"));
+    assert_eq!(model_field(&decision, "failure"), &s("silence"));
+    assert_eq!(model_field(&decision, "verdict"), &Value::Null);
+    assert_eq!(model_field(&decision, "risk_score"), &Value::Null);
+
+    let answers_not_an_object = "{\"model\":\"jev-1.13.0\",\"answers\":42}";
+    let decision = decide_replying("queue", answers_not_an_object);
+    assert_eq!(field(&decision, "decision"), &s("escalate"));
+    assert_eq!(model_field(&decision, "fallback"), &s("silence"));
+    assert_eq!(model_field(&decision, "failure"), &s("silence"));
+    assert_eq!(model_field(&decision, "verdict"), &Value::Null);
+    assert_eq!(model_field(&decision, "risk_score"), &Value::Null);
 }
 
 #[test]
@@ -1345,4 +1361,620 @@ fn the_recorded_fixtures_replay_byte_for_byte() {
         assert_eq!(fixture_transport.consulted(), 1);
         assert_eq!(canonical(&replayed), canonical(expected));
     }
+}
+
+// --- the referral interior -----------------------------------------------------
+
+use sha2::{Digest, Sha256};
+
+/// Read the exhibit into its sections, in the order the
+/// headings stand. Each text stands between its heading
+/// line and the next heading line, stripped of exactly the
+/// one blank line at each end. The exhibit pin and the
+/// stranger pin share this rule by stating it once here, so
+/// the two pins cannot disagree about what the exhibit
+/// says.
+fn exhibit_sections() -> Vec<(String, Vec<String>)> {
+    exhibit_sections_from(&root().join("EXHIBIT.md"))
+}
+
+fn exhibit_sections_from(path: &std::path::Path) -> Vec<(String, Vec<String>)> {
+    let text = std::fs::read_to_string(path).unwrap();
+    let mut sections: Vec<(String, Vec<String>)> = Vec::new();
+    for line in text.lines() {
+        if let Some(name) = line.strip_prefix("### ") {
+            sections.push((name.to_string(), Vec::new()));
+        } else if let Some((_, body)) = sections.last_mut() {
+            body.push(line.to_string());
+        }
+    }
+    sections
+        .into_iter()
+        .map(|(name, mut body)| {
+            if body.first().is_some_and(|line| line.is_empty()) {
+                body.remove(0);
+            }
+            if body.last().is_some_and(|line| line.is_empty()) {
+                body.pop();
+            }
+            (name, body)
+        })
+        .collect()
+}
+
+fn exhibit_text(sections: &[(String, Vec<String>)], heading: &str) -> String {
+    let (_, body) = sections
+        .iter()
+        .find(|(name, _)| name.as_str() == heading)
+        .unwrap_or_else(|| panic!("the exhibit carries no heading named {heading}"));
+    body.join("\n")
+}
+
+fn exhibit_levels(sections: &[(String, Vec<String>)]) -> Vec<String> {
+    let (_, body) = sections
+        .iter()
+        .find(|(name, _)| name.as_str() == "The risk levels")
+        .unwrap();
+    body.iter()
+        .map(|line| line.split_once(". ").unwrap().1.to_string())
+        .collect()
+}
+
+fn contract_text() -> String {
+    std::fs::read_to_string(root().join("CONTRACT.md")).unwrap()
+}
+
+/// Take the text standing between two stated markers of
+/// the contract, by the quoting the template paragraph of
+/// obligation PC-26 itself uses.
+fn quoted(text: &str, start: &str, end: &str) -> String {
+    let from = text
+        .find(start)
+        .unwrap_or_else(|| panic!("the contract states the marker {start}"))
+        + start.len();
+    let to = text[from..]
+        .find(end)
+        .unwrap_or_else(|| panic!("the contract states the marker {end}"))
+        + from;
+    text[from..to].to_string()
+}
+
+/// Assemble one state text under the template obligation
+/// PC-26 states, taking the fixed lines out of the
+/// contract prose by that quoting and the closing text
+/// out of the exhibit. The canonical call line is handed
+/// in rendered, so each pin renders the call in its own
+/// way.
+fn state_from_the_contract_template(
+    contract: &str,
+    sections: &[(String, Vec<String>)],
+    rule_id: &str,
+    reason: &str,
+    canonical_call: &str,
+    interpreter: bool,
+) -> String {
+    let first = quoted(
+        contract,
+        "Its first line is the sentence ",
+        ". Its second line",
+    );
+    let second = quoted(
+        contract,
+        "Its second line is the sentence ",
+        ". Its third line",
+    );
+    let third = quoted(
+        contract,
+        "Its third line is the sentence ",
+        ". An empty line follows",
+    );
+    let rule_lead = quoted(
+        contract,
+        "names the referring rule in the form ",
+        ", then a space, then the rule id",
+    );
+    let reason_lead = quoted(
+        contract,
+        "carries the rule reason in the form ",
+        ", then a colon",
+    );
+    let call_lead = quoted(
+        contract,
+        "The next line is the sentence ",
+        ", followed by a colon.",
+    );
+    let mut lines: Vec<String> = vec![
+        format!("{first}."),
+        format!("{second}."),
+        format!("{third}."),
+        String::new(),
+        format!("{rule_lead} {rule_id}."),
+        format!("{reason_lead}: {reason}"),
+        String::new(),
+        format!("{call_lead}:"),
+        canonical_call.to_string(),
+    ];
+    if interpreter {
+        let sentence = quoted(
+            contract,
+            "one further line follows, the sentence ",
+            ". That line stands in no other state.",
+        );
+        lines.push(format!("{sentence}."));
+    }
+    lines.push(String::new());
+    lines.push(exhibit_text(sections, "The state closing text"));
+    lines.join("\n")
+}
+
+#[test]
+fn the_exhibit_prints_the_doctrine_texts_the_builder_sends() {
+    let sections = exhibit_sections();
+    let headings: Vec<&str> = sections.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(
+        headings,
+        vec![
+            "The verdict instructions",
+            "The criterion of allow",
+            "The criterion of deny",
+            "The criterion of escalate",
+            "The criterion of other",
+            "The risk instructions",
+            "The risk levels",
+            "The state closing text",
+        ]
+    );
+    let doc = shell_judge_policy(0.75, "queue");
+    let transport = StubTransport::replying(&allow_reply());
+    decide_with(&doc, &shell_call(&["ls", "-la", "/work/repo"]), &transport);
+    let requests = transport.requests.borrow();
+    let request = &requests[0];
+    let verdict = field(request, "questions").get("verdict").unwrap();
+    let instructions = exhibit_text(&sections, "The verdict instructions");
+    assert_eq!(
+        field(verdict, "instructions").as_str().unwrap(),
+        instructions.as_str()
+    );
+    let criteria = field(verdict, "criteria");
+    for (label, heading) in [
+        ("allow", "The criterion of allow"),
+        ("deny", "The criterion of deny"),
+        ("escalate", "The criterion of escalate"),
+        ("other", "The criterion of other"),
+    ] {
+        let text = exhibit_text(&sections, heading);
+        assert_eq!(
+            criteria.get(label).unwrap().as_str().unwrap(),
+            text.as_str(),
+            "the criterion of {label}"
+        );
+    }
+    let risk = field(request, "questions").get("risk").unwrap();
+    let risk_instructions = exhibit_text(&sections, "The risk instructions");
+    assert_eq!(
+        field(risk, "instructions").as_str().unwrap(),
+        risk_instructions.as_str()
+    );
+    let levels: Vec<String> = field(risk, "criteria")
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|level| level.as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(levels, exhibit_levels(&sections));
+    let state = field(request, "state").as_str().unwrap();
+    let closing = exhibit_text(&sections, "The state closing text");
+    assert_eq!(state.rsplit("\n\n").next().unwrap(), closing.as_str());
+    // The scratch copy arm the exhibit paragraph of PC-26
+    // names. One text of a scratch copy of the exhibit
+    // stands amended, the amended copy is read back through
+    // the same extraction the pin above performs, and the
+    // comparison of that text against the text the builder
+    // placed in the built request must fail there, so a
+    // regression that compared the exhibit against itself
+    // would turn this pin red.
+    let scratch = std::env::temp_dir().join(format!(
+        "portcullis-judgment-{}-exhibit-scratch",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&scratch).unwrap();
+    let amended_path = scratch.join("EXHIBIT.md");
+    let exhibit_source = std::fs::read_to_string(root().join("EXHIBIT.md")).unwrap();
+    let amended_source = exhibit_source.replacen(instructions.as_str(), "Amended instructions.", 1);
+    assert_ne!(amended_source, exhibit_source);
+    std::fs::write(&amended_path, &amended_source).unwrap();
+    let amended_sections = exhibit_sections_from(&amended_path);
+    let amended_instructions = exhibit_text(&amended_sections, "The verdict instructions");
+    assert_ne!(
+        field(verdict, "instructions").as_str().unwrap(),
+        amended_instructions.as_str(),
+        "an amended exhibit text must fail the comparison against the built request"
+    );
+    std::fs::remove_dir_all(&scratch).unwrap();
+}
+
+#[test]
+fn the_state_template_of_the_contract_builds_the_state_the_gate_sends() {
+    let contract = contract_text();
+    let sections = exhibit_sections();
+    let doc = judge_policy(
+        vec![
+            rule(
+                "judge-shell",
+                "shell",
+                "judge",
+                Value::obj(vec![("argv0", matcher("glob", "*"))]),
+                "shell calls whose safety turns on the stated task",
+            ),
+            rule(
+                "judge-file",
+                "file",
+                "judge",
+                Value::obj(vec![("operation", matcher("exact", "read"))]),
+                "file calls whose safety turns on the stated task",
+            ),
+        ],
+        0.75,
+        "queue",
+    );
+    let calls: [(Value, &str, &str); 2] = [
+        (
+            shell_call(&["ls", "-la", "/work/repo"]),
+            "judge-shell",
+            "shell calls whose safety turns on the stated task",
+        ),
+        (
+            Value::obj(vec![
+                ("format", s("portcullis-call/1")),
+                ("kind", s("file")),
+                ("operation", s("read")),
+                ("path", s("/work/repo/src/lib.rs")),
+            ]),
+            "judge-file",
+            "file calls whose safety turns on the stated task",
+        ),
+    ];
+    for (call, rule_id, reason) in &calls {
+        let transport = StubTransport::replying(&allow_reply());
+        decide_with(&doc, call, &transport);
+        let requests = transport.requests.borrow();
+        let built = field(&requests[0], "state").as_str().unwrap();
+        let canonical_call = String::from_utf8(canonical(call)).unwrap();
+        let assembled = state_from_the_contract_template(
+            &contract,
+            &sections,
+            rule_id,
+            reason,
+            &canonical_call,
+            false,
+        );
+        assert_eq!(assembled, built, "the state over rule {rule_id}");
+    }
+}
+
+#[test]
+fn the_interpreter_line_stands_in_the_state_exactly_where_the_contract_places_it() {
+    let contract = contract_text();
+    let sections = exhibit_sections();
+    let doc = shell_judge_policy(0.75, "queue");
+    let transport = StubTransport::replying(&allow_reply());
+    decide_with(&doc, &shell_call(&["sh", "-c", "ls"]), &transport);
+    let requests = transport.requests.borrow();
+    let state = field(&requests[0], "state").as_str().unwrap();
+    let lines: Vec<&str> = state.split('\n').collect();
+    assert_eq!(
+        lines.len(),
+        12,
+        "the interpreter state stands at twelve lines"
+    );
+    assert_eq!(
+        lines[8],
+        "{\"argv\":[\"sh\",\"-c\",\"ls\"],\"format\":\"portcullis-call/1\",\"kind\":\"shell\"}"
+    );
+    let sentence = quoted(
+        &contract,
+        "one further line follows, the sentence ",
+        ". That line stands in no other state.",
+    );
+    let expected_line = format!("{sentence}.");
+    assert_eq!(lines[9], expected_line.as_str());
+    assert_eq!(lines[10], "");
+    let closing = exhibit_text(&sections, "The state closing text");
+    assert_eq!(lines[11], closing.as_str());
+}
+
+/// The canonical renderer of the stranger pin, an
+/// implementation inside this test file of the rules
+/// obligation PC-4 and the port amendment state, written
+/// from the contract's words rather than called from the
+/// library. Keys sort, no spaces stand, text stands as
+/// UTF-8 without ASCII escaping under the escaping table
+/// the writer applies, and integers stand as their
+/// decimal text. A request document holds only objects
+/// and arrays and texts, so no float stands anywhere in
+/// it, and the float arm below is stated here as untested
+/// by this pin and held instead by the recorded fixture
+/// pins over the expected records, where floats do stand.
+fn stranger_render(document: &Value) -> String {
+    let mut out = String::new();
+    stranger_write(document, &mut out);
+    out
+}
+
+fn stranger_write(document: &Value, out: &mut String) {
+    match document {
+        Value::Null => out.push_str("null"),
+        Value::Bool(true) => out.push_str("true"),
+        Value::Bool(false) => out.push_str("false"),
+        Value::Int(text) => out.push_str(text),
+        Value::Float(value) => out.push_str(&value.to_string()),
+        Value::Str(text) => stranger_write_text(text, out),
+        Value::Array(items) => {
+            out.push('[');
+            for (index, item) in items.iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+                stranger_write(item, out);
+            }
+            out.push(']');
+        }
+        Value::Object(pairs) => {
+            let mut sorted: Vec<&(String, Value)> = pairs.iter().collect();
+            sorted.sort_by(|a, b| a.0.cmp(&b.0));
+            out.push('{');
+            for (index, (key, value)) in sorted.iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+                stranger_write_text(key, out);
+                out.push(':');
+                stranger_write(value, out);
+            }
+            out.push('}');
+        }
+    }
+}
+
+fn stranger_write_text(text: &str, out: &mut String) {
+    out.push('"');
+    for c in text.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{0008}' => out.push_str("\\b"),
+            '\u{000C}' => out.push_str("\\f"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+}
+
+/// The pin's own reading of the interpreter test
+/// obligation PC-5 fixes, over the basename set stated
+/// here in the open.
+fn stranger_interpreter_standing(call: &Value) -> bool {
+    const BASENAMES: [&str; 9] = [
+        "sh", "bash", "dash", "ash", "zsh", "ksh", "csh", "tcsh", "fish",
+    ];
+    if call.get("kind").and_then(|kind| kind.as_str()) != Some("shell") {
+        return false;
+    }
+    let argv = match call.get("argv").and_then(|argv| argv.as_array()) {
+        Some(argv) => argv,
+        None => return false,
+    };
+    let first = match argv.first().and_then(|token| token.as_str()) {
+        Some(first) => first,
+        None => return false,
+    };
+    let basename = first.rsplit('/').next().unwrap_or(first);
+    BASENAMES.contains(&basename)
+}
+
+/// Assemble one recorded case's request from the contract
+/// and the exhibit alone. The validated call comes
+/// through the library's public validation, which is none
+/// of the three surfaces the stranger pin abstains from,
+/// because the state carries the call exactly as the gate
+/// validated it under obligation PC-1. The assembly
+/// asserts the pin's own interpreter reading agrees with
+/// the library's marker on every case it drives, so the
+/// stated basename set and the landed set cannot part
+/// company in silence.
+fn stranger_assemble(
+    contract: &str,
+    sections: &[(String, Vec<String>)],
+    fixture: &Value,
+) -> (String, bool) {
+    let policy = field(fixture, "policy");
+    let call = field(fixture, "call");
+    let validated = portcullis::validate_call(call).unwrap();
+    let judge_rule = field(policy, "rules")
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|rule| field(rule, "action").as_str() == Some("judge"))
+        .unwrap();
+    let interpreter = stranger_interpreter_standing(&validated);
+    assert_eq!(
+        interpreter,
+        portcullis::is_interpreter_call(&validated),
+        "the stated basename set and the landed marker disagree"
+    );
+    let state = state_from_the_contract_template(
+        contract,
+        sections,
+        field(judge_rule, "id").as_str().unwrap(),
+        field(judge_rule, "reason").as_str().unwrap(),
+        &stranger_render(&validated),
+        interpreter,
+    );
+    let verdict_question = Value::obj(vec![
+        (
+            "criteria",
+            Value::obj(vec![
+                (
+                    "allow",
+                    s(&exhibit_text(sections, "The criterion of allow")),
+                ),
+                ("deny", s(&exhibit_text(sections, "The criterion of deny"))),
+                (
+                    "escalate",
+                    s(&exhibit_text(sections, "The criterion of escalate")),
+                ),
+                (
+                    "other",
+                    s(&exhibit_text(sections, "The criterion of other")),
+                ),
+            ]),
+        ),
+        (
+            "instructions",
+            s(&exhibit_text(sections, "The verdict instructions")),
+        ),
+        ("type", s("choice")),
+    ]);
+    let risk_question = Value::obj(vec![
+        (
+            "criteria",
+            arr(exhibit_levels(sections)
+                .iter()
+                .map(|level| s(level.as_str()))
+                .collect()),
+        ),
+        (
+            "instructions",
+            s(&exhibit_text(sections, "The risk instructions")),
+        ),
+        ("type", s("score")),
+    ]);
+    let model = field(field(policy, "judgment"), "model").as_str().unwrap();
+    let request = Value::obj(vec![
+        ("model", s(model)),
+        (
+            "questions",
+            Value::obj(vec![("risk", risk_question), ("verdict", verdict_question)]),
+        ),
+        ("state", s(&state)),
+    ]);
+    (stranger_render(&request), interpreter)
+}
+
+#[test]
+fn the_contract_and_the_exhibit_rebuild_a_recorded_request_byte_for_byte() {
+    // The stranger pin of the Round 6 design. An
+    // implementer holding the amended contract and the
+    // exhibit, and nothing else from this repo's code,
+    // reproduces a recorded fixture's request document
+    // byte for byte and arrives at the request digest the
+    // fixture's record carries. Three abstentions are the
+    // pin's whole value, and they are stated here so a
+    // later editor who helpfully replaces the pin's own
+    // machinery with the library's can see the claim being
+    // given away. The pin does not call the request
+    // builder. It does not call the library's canonical
+    // writer. It does not call the library's digest
+    // function.
+    let contract = contract_text();
+    let sections = exhibit_sections();
+    // The first step reads the shape out of the contract,
+    // by the phrase reading the setup substance pin
+    // performs over the same text.
+    for phrase in [
+        "exactly the keys model and questions and state",
+        "exactly the keys risk and verdict",
+        "exactly the keys criteria and instructions and type",
+        "exactly the keys allow and deny and escalate and other",
+        "an array of ten level texts",
+    ] {
+        assert!(contract.contains(phrase), "the contract states {phrase}");
+    }
+    let fixtures_dir = root().join("tests").join("fixtures").join("judgment");
+    let read_case = |name: &str| -> Value {
+        let text = std::fs::read_to_string(fixtures_dir.join(name)).unwrap();
+        strict_parse(&text).unwrap()
+    };
+    // The specified case, a11, carried through the five
+    // steps. Its call is a plain listing, so it stands on
+    // the absent side of the interpreter line, and the pin
+    // asserts that standing from its own reading.
+    let fixture = read_case("a11.json");
+    let (rendered, interpreter) = stranger_assemble(&contract, &sections, &fixture);
+    assert!(
+        !interpreter,
+        "case a11 stands on the absent side of the interpreter line"
+    );
+    assert_eq!(
+        field(field(&fixture, "expected"), "interpreter"),
+        &Value::Bool(false)
+    );
+    assert_eq!(
+        rendered,
+        field(&fixture, "request").as_str().unwrap(),
+        "the assembled request differs from the recorded request of case a11"
+    );
+    let digest = format!("sha256:{:x}", Sha256::digest(rendered.as_bytes()));
+    assert_eq!(
+        digest,
+        model_field(field(&fixture, "expected"), "request_digest")
+            .as_str()
+            .unwrap(),
+        "the digest of the assembly differs from the record of case a11"
+    );
+    // The bounded extension, the same assembly over every
+    // recorded case whose call is an interpreter call or a
+    // url call, the two seams case a11 does not exercise.
+    // The extension asserts it found both kinds, so a
+    // folder that quietly lost them fails here rather than
+    // passing over a smaller set in silence.
+    let mut paths: Vec<PathBuf> = std::fs::read_dir(&fixtures_dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+        .collect();
+    paths.sort();
+    let mut interpreter_cases = 0;
+    let mut url_cases = 0;
+    for path in paths {
+        let text = std::fs::read_to_string(&path).unwrap();
+        let case = strict_parse(&text).unwrap();
+        let call = field(&case, "call");
+        let is_url = field(call, "kind").as_str() == Some("network") && call.get("url").is_some();
+        let is_interpreter = field(field(&case, "expected"), "interpreter") == &Value::Bool(true);
+        if !is_url && !is_interpreter {
+            continue;
+        }
+        if is_url {
+            url_cases += 1;
+        }
+        if is_interpreter {
+            interpreter_cases += 1;
+        }
+        let (rendered, _) = stranger_assemble(&contract, &sections, &case);
+        assert_eq!(
+            rendered,
+            field(&case, "request").as_str().unwrap(),
+            "the extension case {}",
+            path.display()
+        );
+        let digest = format!("sha256:{:x}", Sha256::digest(rendered.as_bytes()));
+        assert_eq!(
+            digest,
+            model_field(field(&case, "expected"), "request_digest")
+                .as_str()
+                .unwrap(),
+            "the extension case {}",
+            path.display()
+        );
+    }
+    assert!(
+        interpreter_cases >= 1,
+        "the extension found no interpreter case to drive"
+    );
+    assert!(url_cases >= 1, "the extension found no url case to drive");
 }
