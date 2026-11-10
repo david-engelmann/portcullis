@@ -431,6 +431,7 @@ fn contract_obligations_carry_their_substance() {
         "the probabilities entry of the chosen label",
         "the exhibit file EXHIBIT.md",
         "the first rule in policy order that matches the call",
+        "a policy that stands loaded",
         "holds exactly the keys format and kind and method and host and port",
         "with keys sorted at every level",
     ] {
