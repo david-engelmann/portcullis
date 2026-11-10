@@ -424,6 +424,40 @@ fn the_first_of_a_judge_rule_and_an_allow_rule_decides() {
     assert_eq!(field(&decision, "format"), &s("portcullis-decision/1"));
     assert_eq!(field(&decision, "decision"), &s("allow"));
     assert_eq!(transport.consulted(), 0);
+
+    let two_judge_rules = judge_policy(
+        vec![
+            rule(
+                "judge-first",
+                "shell",
+                "judge",
+                Value::obj(vec![("argv0", matcher("glob", "*"))]),
+                "the first judge reason",
+            ),
+            rule(
+                "judge-second",
+                "shell",
+                "judge",
+                Value::obj(vec![("argv0", matcher("glob", "*"))]),
+                "the second judge reason",
+            ),
+        ],
+        0.75,
+        "queue",
+    );
+    let transport = StubTransport::replying(&allow_reply());
+    let decision = decide_with(&two_judge_rules, &shell_call(&["ls"]), &transport);
+    assert_eq!(field(&decision, "format"), &s("portcullis-decision/2"));
+    assert_eq!(transport.consulted(), 1);
+    assert_eq!(
+        field(&decision, "source"),
+        &Value::obj(vec![("type", s("rule")), ("rule", s("judge-first"))])
+    );
+    let requests = transport.requests.borrow();
+    let state = field(&requests[0], "state").as_str().unwrap();
+    assert!(state.contains("The referring rule is judge-first."));
+    assert!(state.contains("The rule states: the first judge reason"));
+    assert!(!state.contains("judge-second"));
 }
 
 #[test]
