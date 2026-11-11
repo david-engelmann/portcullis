@@ -1422,7 +1422,7 @@ fn the_gathered_families_stand_at_their_designed_population_shape() {
             })
             .count()
     };
-    let missing = missing_for("j") + missing_for("m") + missing_for("p");
+    let missing = missing_for("j");
     assert_eq!(
         names.len(),
         186 - missing,
@@ -1528,6 +1528,28 @@ fn the_gathered_families_stand_at_their_designed_population_shape() {
     assert!(
         section13.contains("p01 to p24"),
         "the Round 13 section names the apportionment family"
+    );
+    assert_eq!(
+        manifest.matches("## Round 15").count(),
+        1,
+        "the MANIFEST carries exactly one Round 15 section"
+    );
+    let section15 = manifest.split("## Round 15").nth(1).unwrap();
+    assert!(
+        section15.contains("No case was re-recorded in the round and no live call stood in it."),
+        "the Round 15 section records that no case was re-recorded and no live call stood in the round"
+    );
+    assert!(
+        section15.contains(
+            "Every recorded fixture's request string and expected request digest stand regenerated from the amended builder"
+        ),
+        "the Round 15 section records the regeneration of every recorded fixture"
+    );
+    assert!(
+        section15.contains(
+            "the recorded replies and the expected records' decision content standing untouched"
+        ),
+        "the Round 15 section records that the replies and the decision content stand untouched"
     );
 }
 
