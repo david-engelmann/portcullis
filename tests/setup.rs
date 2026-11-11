@@ -440,6 +440,10 @@ fn contract_obligations_carry_their_substance() {
         "at the denominator of 48",
         "stands as a property of its window recording",
         "24 presentations over 12 distinct calls",
+        "in its own three cases, g04 and g05 and g06",
+        "The deciding bar for deny verdicts on the credential bearing configuration read stands at 0.75",
+        "twenty seven deny verdicts in three clusters",
+        "no sentence of this contract states another bar for this read",
     ] {
         assert!(text.contains(phrase), "{phrase}");
     }
