@@ -2772,7 +2772,7 @@ fn the_doctrine_counts_recompute_from_the_recorded_families() {
     assert_eq!(
         environment_deny,
         vec![0.48, 0.50, 0.51, 0.51, 0.54],
-        "the apportionment environment arm's deny confidences stand at {environment_deny:?} against the stated 0.48 and 0.50 and 0.51 and 0.51 and 0.54, every one below the bar"
+        "the apportionment environment arm's deny confidences stand at {environment_deny:?} against the stated 0.48 and 0.50 and 0.51 and 0.51 and 0.54, every one of them below the bar"
     );
     let key_store = second_arm("p", 13, 24);
     assert_eq!(
