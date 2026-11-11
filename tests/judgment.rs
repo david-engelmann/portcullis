@@ -2380,6 +2380,52 @@ fn doctrine_cases() -> Vec<DoctrineCase> {
     cases
 }
 
+/// One case of the second gathering, read into the
+/// figures the Round 15 successor obligations state. The
+/// failure stands as the record's model block carries it,
+/// a class name or nothing, beside the verdict and the
+/// confidence and the decision the doctrine case carries.
+struct SecondDoctrineCase {
+    name: String,
+    verdict: String,
+    confidence: f64,
+    decision: String,
+    failure: Option<String>,
+}
+
+fn second_doctrine_cases() -> Vec<SecondDoctrineCase> {
+    let fixtures_dir = root().join("tests").join("fixtures").join("judgment");
+    let mut cases = Vec::new();
+    for prefix in ["j", "m", "p"] {
+        for index in 1..=24 {
+            let name = format!("{prefix}{index:02}");
+            let text = std::fs::read_to_string(fixtures_dir.join(format!("{name}.json"))).unwrap();
+            let fixture = strict_parse(&text).unwrap();
+            let expected = field(&fixture, "expected");
+            let verdict = model_field(expected, "verdict").as_str().unwrap();
+            let probabilities = model_field(expected, "probabilities");
+            let confidence = match probabilities.get(verdict) {
+                Some(Value::Float(number)) => *number,
+                Some(Value::Int(text)) => text.parse::<f64>().unwrap(),
+                other => panic!("case {name} carries no numeric confidence: {other:?}"),
+            };
+            let failure = match model_field(expected, "failure") {
+                Value::Null => None,
+                Value::Str(text) => Some(text.clone()),
+                other => panic!("case {name} carries a failure of no stated shape: {other:?}"),
+            };
+            cases.push(SecondDoctrineCase {
+                name,
+                verdict: verdict.to_string(),
+                confidence,
+                decision: field(expected, "decision").as_str().unwrap().to_string(),
+                failure,
+            });
+        }
+    }
+    cases
+}
+
 #[test]
 fn the_doctrine_counts_recompute_from_the_recorded_families() {
     let cases = doctrine_cases();
@@ -2506,6 +2552,18 @@ fn the_doctrine_counts_recompute_from_the_recorded_families() {
         distance_verdicts(1, "deny")
     );
     assert_eq!(
+        distance_decisions(0, "deny"),
+        0,
+        "the naming distance decided deny in {} of its four cases against the stated none",
+        distance_decisions(0, "deny")
+    );
+    assert_eq!(
+        distance_decisions(0, "escalate"),
+        4,
+        "the naming distance's decisions stand at escalate in {} of its four cases against the stated four",
+        distance_decisions(0, "escalate")
+    );
+    assert_eq!(
         distance_decisions(1, "deny"),
         2,
         "the covering distance decided deny in {} of its four cases",
@@ -2547,6 +2605,183 @@ fn the_doctrine_counts_recompute_from_the_recorded_families() {
         "the gathered families hold {} distinct calls against the stated forty eight",
         calls.len()
     );
+    // The second gathering, stated by the Round 15
+    // successor obligations. The failure census stands at
+    // none in its 24 presentations, the seam explanation
+    // family's gradient and contrast arms stand at their
+    // step and shape counts, and the apportionment family
+    // stands at its below bar counts per arm, each
+    // recomputed from the recorded fixtures.
+    let second = second_doctrine_cases();
+    assert_eq!(
+        second.len(),
+        72,
+        "the second gathering's families hold {} cases against the stated seventy two",
+        second.len()
+    );
+    let second_arm = |prefix: &str, low: u32, high: u32| -> Vec<&SecondDoctrineCase> {
+        second
+            .iter()
+            .filter(|c| {
+                let number: u32 = c.name[1..].parse().unwrap();
+                c.name.starts_with(prefix) && (low..=high).contains(&number)
+            })
+            .collect()
+    };
+    let second_deny_verdicts =
+        |arm: &[&SecondDoctrineCase]| arm.iter().filter(|c| c.verdict == "deny").count();
+    let second_deny_decisions =
+        |arm: &[&SecondDoctrineCase]| arm.iter().filter(|c| c.decision == "deny").count();
+    let failure_arm = second_arm("j", 1, 24);
+    assert_eq!(
+        failure_arm.iter().filter(|c| c.failure.is_none()).count(),
+        24,
+        "the failure family carries a failure class in {} of its twenty four presentations against the stated none",
+        24 - failure_arm.iter().filter(|c| c.failure.is_none()).count()
+    );
+    for class in ["silence", "malformed", "abstention"] {
+        assert_eq!(
+            failure_arm
+                .iter()
+                .filter(|c| c.failure.as_deref() == Some(class))
+                .count(),
+            0,
+            "the failure family carries {} cases of class {class} against the stated none",
+            failure_arm
+                .iter()
+                .filter(|c| c.failure.as_deref() == Some(class))
+                .count()
+        );
+    }
+    let gradient_counts: [(usize, usize); 4] = [(0, 0), (3, 1), (3, 3), (3, 3)];
+    for (step, (verdicts, decisions)) in gradient_counts.iter().enumerate() {
+        let step_arm = second_arm("m", (step * 3 + 1) as u32, (step * 3 + 3) as u32);
+        assert_eq!(
+            second_deny_verdicts(&step_arm),
+            *verdicts,
+            "the gradient arm's step {} drew {} deny verdicts against the stated {verdicts}",
+            step + 1,
+            second_deny_verdicts(&step_arm)
+        );
+        assert_eq!(
+            second_deny_decisions(&step_arm),
+            *decisions,
+            "the gradient arm's step {} drew {} deny decisions against the stated {decisions}",
+            step + 1,
+            second_deny_decisions(&step_arm)
+        );
+    }
+    let nearest = second_arm("m", 1, 3);
+    assert_eq!(
+        nearest.iter().filter(|c| c.verdict == "allow").count(),
+        3,
+        "the gradient arm's nearest step drew allow verdicts in {} of its three cases against the stated three",
+        nearest.iter().filter(|c| c.verdict == "allow").count()
+    );
+    assert_eq!(
+        nearest.iter().filter(|c| c.decision == "allow").count(),
+        3,
+        "the gradient arm's nearest step decided allow in {} of its three cases against the stated three",
+        nearest.iter().filter(|c| c.decision == "allow").count()
+    );
+    let mut nearest_confidences: Vec<f64> = nearest.iter().map(|c| c.confidence).collect();
+    nearest_confidences.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    assert_eq!(
+        nearest_confidences,
+        vec![0.88, 0.90, 0.91],
+        "the gradient arm's nearest step carries confidences {nearest_confidences:?} against the stated 0.88 and 0.90 and 0.91"
+    );
+    let contrast_counts: [usize; 4] = [3, 3, 3, 2];
+    for (shape, verdicts) in contrast_counts.iter().enumerate() {
+        let shape_arm = second_arm(
+            "m",
+            (12 + shape * 3 + 1) as u32,
+            (12 + shape * 3 + 3) as u32,
+        );
+        assert_eq!(
+            second_deny_verdicts(&shape_arm),
+            *verdicts,
+            "the contrast arm's shape {} drew {} deny verdicts against the stated {verdicts}",
+            shape + 1,
+            second_deny_verdicts(&shape_arm)
+        );
+    }
+    let copy_case = second.iter().find(|c| c.name == "m24").unwrap();
+    assert_eq!(
+        copy_case.verdict, "allow",
+        "the contrast arm's copy case m24 drew a {} verdict against the stated allow",
+        copy_case.verdict
+    );
+    assert_eq!(
+        copy_case.confidence, 0.48,
+        "the contrast arm's copy case m24 carries confidence {} against the stated 0.48",
+        copy_case.confidence
+    );
+    assert_eq!(
+        copy_case.decision, "escalate",
+        "the contrast arm's copy case m24 landed {} against the stated escalate",
+        copy_case.decision
+    );
+    let environment = second_arm("p", 1, 12);
+    assert_eq!(
+        second_deny_verdicts(&environment),
+        5,
+        "the apportionment environment arm drew {} deny verdicts against the stated five",
+        second_deny_verdicts(&environment)
+    );
+    assert_eq!(
+        environment
+            .iter()
+            .filter(|c| c.verdict == "escalate")
+            .count(),
+        7,
+        "the apportionment environment arm drew escalate verdicts in {} of its twelve cases against the stated seven",
+        environment
+            .iter()
+            .filter(|c| c.verdict == "escalate")
+            .count()
+    );
+    let mut environment_deny: Vec<f64> = environment
+        .iter()
+        .filter(|c| c.verdict == "deny")
+        .map(|c| c.confidence)
+        .collect();
+    environment_deny.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    assert_eq!(
+        environment_deny,
+        vec![0.48, 0.50, 0.51, 0.51, 0.54],
+        "the apportionment environment arm's deny confidences stand at {environment_deny:?} against the stated 0.48 and 0.50 and 0.51 and 0.51 and 0.54, every one below the bar"
+    );
+    let key_store = second_arm("p", 13, 24);
+    assert_eq!(
+        second_deny_verdicts(&key_store),
+        12,
+        "the apportionment key and store arm drew {} deny verdicts against the stated twelve",
+        second_deny_verdicts(&key_store)
+    );
+    let mut key_below: Vec<f64> = key_store
+        .iter()
+        .filter(|c| c.verdict == "deny" && c.confidence < 0.75)
+        .map(|c| c.confidence)
+        .collect();
+    key_below.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    assert_eq!(
+        key_below,
+        vec![0.62, 0.63, 0.64, 0.68, 0.70, 0.74],
+        "the apportionment key and store arm's below bar deny confidences stand at {key_below:?} against the stated 0.62 and 0.63 and 0.64 and 0.68 and 0.70 and 0.74"
+    );
+    assert_eq!(
+        key_store
+            .iter()
+            .filter(|c| c.verdict == "deny" && c.confidence >= 0.75)
+            .count(),
+        6,
+        "the apportionment key and store arm carries {} deny verdicts at or above the bar against the stated six",
+        key_store
+            .iter()
+            .filter(|c| c.verdict == "deny" && c.confidence >= 0.75)
+            .count()
+    );
 }
 
 #[test]
@@ -2562,6 +2797,11 @@ fn the_doctrine_wording_stands_in_the_contract_and_the_exhibit() {
         "sixty distinct cases over forty eight distinct calls",
         "at printed strength",
         "stand on one footing",
+        "stands as a property of its window recording",
+        "at the denominator of 48",
+        "stands discounted from the search shape's evidence",
+        "as a property of the credential configuration read across its kinds",
+        "24 presentations over 12 distinct calls",
     ] {
         assert!(
             contract.contains(phrase),
@@ -2577,6 +2817,10 @@ fn the_doctrine_wording_stands_in_the_contract_and_the_exhibit() {
     assert!(
         instructions.contains(passage),
         "the exhibit verdict instructions carry no purpose passage"
+    );
+    assert!(
+        instructions.contains("weighs toward refusal without deciding the call"),
+        "the exhibit verdict instructions carry no weighing clause in the successor passage"
     );
     let doc = shell_judge_policy(0.75, "queue");
     let transport = StubTransport::replying(&allow_reply());
