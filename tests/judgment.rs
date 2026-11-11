@@ -1776,18 +1776,191 @@ fn the_induced_family_census_reads_the_named_count_lines() {
 }
 
 #[test]
+fn the_failed_consultation_crossing_recomputes_at_sixty_over_twelve() {
+    // The crossing pin of obligation PC-34, at its own seat
+    // beside the induced family pins. The family pins perform
+    // the family shape at family strength, the presentation
+    // pin asserting each induced case presents its inside arm
+    // call and policy unchanged, the classes pin asserting
+    // each induced case recomputes to its recorded record
+    // entire, and the census pin reading the family counts
+    // off the MANIFEST named lines. This pin performs the
+    // doctrine statement at doctrine strength, one measurement
+    // standing over two populations no family pin joins, the
+    // induced family grouped by class in the PC-16 order with
+    // its distinct calls counted by call identity against
+    // g01 to g12 and not by fixture count, and the control leg
+    // of the same window censused by verdict and by decision
+    // with case r12 deciding at the bar exactly. It asserts
+    // nothing about the evaluation leg of the window, which
+    // stands at printed strength behind no fixture.
+    let fixtures_dir = root().join("tests").join("fixtures").join("judgment");
+    let read = |name: &str| -> Value {
+        strict_parse(&std::fs::read_to_string(fixtures_dir.join(format!("{name}.json"))).unwrap())
+            .unwrap()
+    };
+    let classes = [
+        "silence",
+        "malformed",
+        "abstention",
+        "transport",
+        "no transport",
+    ];
+    // The group and presentation counts derive from the
+    // fixture population standing in the folder, the q named
+    // documents counted by their numbers, so a presentation
+    // added to the folder or missing from it moves the counts
+    // the assertions below read.
+    let population: Vec<u32> = std::fs::read_dir(&fixtures_dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with('q') && name.ends_with(".json"))
+        .filter_map(|name| name[1..name.len() - 5].parse::<u32>().ok())
+        .collect();
+    let mut call_keys: Vec<String> = Vec::new();
+    for (index, class) in classes.iter().enumerate() {
+        let grouped = population
+            .iter()
+            .filter(|&&number| number.saturating_sub(1) / 12 == index as u32)
+            .count();
+        for slot in 1..=12u32 {
+            let number = index as u32 * 12 + slot;
+            let name = format!("q{number:02}");
+            let fixture = read(&name);
+            let expected = field(&fixture, "expected");
+            call_keys.push(String::from_utf8(canonical(field(&fixture, "call"))).unwrap());
+            assert_eq!(
+                model_field(expected, "failure"),
+                &s(class),
+                "crossing presentation {name} records a failure class other than \
+                 the class its PC-16 group induces"
+            );
+            assert_eq!(
+                model_field(expected, "fallback"),
+                &s(class),
+                "crossing presentation {name} records a fallback other than \
+                 the class its PC-16 group induces"
+            );
+            assert_eq!(
+                field(expected, "decision"),
+                &s("escalate"),
+                "crossing presentation {name} records a decision other than \
+                 the fallback outcome of the policy it carries"
+            );
+        }
+        assert_eq!(
+            grouped, 12,
+            "the crossing group of class {class} holds {grouped} presentations \
+             against the stated twelve"
+        );
+    }
+    assert_eq!(
+        population.len(),
+        60,
+        "the crossing holds {} presentations against the stated sixty",
+        population.len()
+    );
+    let mut distinct = call_keys.clone();
+    distinct.sort();
+    distinct.dedup();
+    assert_eq!(
+        distinct.len(),
+        12,
+        "the crossing stands over {} distinct calls against the stated twelve",
+        distinct.len()
+    );
+    let mut inside_keys: Vec<String> = (1..=12u32)
+        .map(|number| {
+            let fixture = read(&format!("g{number:02}"));
+            String::from_utf8(canonical(field(&fixture, "call"))).unwrap()
+        })
+        .collect();
+    inside_keys.sort();
+    inside_keys.dedup();
+    assert_eq!(
+        distinct, inside_keys,
+        "the crossing's distinct calls stand other than the seam inside arm calls g01 to g12"
+    );
+    let mut verdicts: Vec<String> = Vec::new();
+    let mut decisions: Vec<String> = Vec::new();
+    for number in 1..=12u32 {
+        let fixture = read(&format!("r{number:02}"));
+        let expected = field(&fixture, "expected");
+        verdicts.push(
+            model_field(expected, "verdict")
+                .as_str()
+                .unwrap()
+                .to_string(),
+        );
+        decisions.push(field(expected, "decision").as_str().unwrap().to_string());
+    }
+    let count =
+        |values: &[String], label: &str| values.iter().filter(|v| v.as_str() == label).count();
+    assert_eq!(
+        count(&verdicts, "deny"),
+        10,
+        "the control leg drew {} deny verdicts against the stated ten",
+        count(&verdicts, "deny")
+    );
+    assert_eq!(
+        count(&verdicts, "escalate"),
+        2,
+        "the control leg drew {} escalate verdicts against the stated two",
+        count(&verdicts, "escalate")
+    );
+    assert_eq!(
+        count(&decisions, "deny"),
+        7,
+        "the control leg drew {} deny decisions against the stated seven",
+        count(&decisions, "deny")
+    );
+    assert_eq!(
+        count(&decisions, "escalate"),
+        5,
+        "the control leg drew {} escalate decisions against the stated five",
+        count(&decisions, "escalate")
+    );
+    let r12 = read("r12");
+    let r12_expected = field(&r12, "expected");
+    assert_eq!(
+        model_field(r12_expected, "verdict"),
+        &s("deny"),
+        "case r12 records a verdict other than deny"
+    );
+    assert_eq!(
+        model_field(r12_expected, "confidence"),
+        &Value::Float(0.75),
+        "case r12 records a confidence other than exactly 0.75"
+    );
+    assert_eq!(
+        field(r12_expected, "decision"),
+        &s("deny"),
+        "case r12 records a decision other than deny"
+    );
+}
+
+#[test]
 fn the_recorded_replies_recompute_the_expected_model_blocks() {
     // The reply strength population pin, discharging residual
-    // R17 at its named seat. Every recorded case in the corpus
-    // has its expected verdict and confidence re-derived from
-    // its recorded reply body under the wire grammar, and the
-    // re-derived pair is asserted against the fixture expected
-    // block. A consistent re-recording inside an expected
-    // block alone therefore fails this pin. The transport and
-    // no transport presentations of the induced family carry
-    // the stated absence form and step over the verdict
-    // derivation, asserting their recorded class fields in its
-    // place, as their pin paragraph states.
+    // R17 at its named seat and consolidated under residual
+    // R21 in Round 20. Every recorded case in the corpus is
+    // decided through the production judging path, its
+    // recorded reply body handed to the standing fixture
+    // transport form this suite uses and the production entry
+    // point called on the case's own recorded policy and
+    // call, and the verdict and confidence and probabilities
+    // triple the production classification and the combination
+    // rule together produce is asserted against the fixture
+    // expected model block, together with the failure and
+    // fallback fields the production record carries. A
+    // consistent re-recording inside an expected block alone
+    // therefore fails this pin, and a grammar change in the
+    // library is measured against the recorded expectations
+    // here rather than mirrored by hand in test code. The
+    // transport and no transport presentations of the induced
+    // family carry the stated absence form and step over the
+    // production derivation, asserting their recorded class
+    // fields in its place, as their pin paragraph states.
     let fixtures_dir = root().join("tests").join("fixtures").join("judgment");
     let mut names: Vec<String> = std::fs::read_dir(&fixtures_dir)
         .unwrap()
@@ -1841,86 +2014,42 @@ fn the_recorded_replies_recompute_the_expected_model_blocks() {
                 assert_failure(class);
             }
             Value::Str(body) => {
-                if body.trim().is_empty() {
-                    assert_failure("silence");
-                    continue;
-                }
-                let document = match strict_parse(body) {
-                    Ok(document) => document,
-                    Err(_) => {
-                        assert_failure("malformed");
-                        continue;
-                    }
-                };
-                let entry = match document.get("answers").and_then(|a| a.get("verdict")) {
-                    None => {
-                        assert_failure("silence");
-                        continue;
-                    }
-                    Some(entry) => entry,
-                };
-                let choice = match entry.get("choice") {
-                    Some(Value::Str(choice))
-                        if ["allow", "deny", "escalate", "other"].contains(&choice.as_str()) =>
-                    {
-                        choice.clone()
-                    }
-                    _ => {
-                        assert_failure("malformed");
-                        continue;
-                    }
-                };
-                let probabilities = match entry.get("probabilities") {
-                    Some(probabilities)
-                        if probabilities
-                            .as_object()
-                            .is_some_and(|pairs| pairs.len() == 4)
-                            && ["allow", "deny", "escalate", "other"].iter().all(|label| {
-                                matches!(probabilities.get(label),
-                                    Some(Value::Float(number)) if (0.0..=1.0).contains(number))
-                                    || matches!(probabilities.get(label),
-                                        Some(Value::Int(text)) if text.parse::<f64>().is_ok_and(|n| (0.0..=1.0).contains(&n)))
-                            }) =>
-                    {
-                        probabilities.clone()
-                    }
-                    _ => {
-                        assert_failure("malformed");
-                        continue;
-                    }
-                };
-                if choice == "other" {
-                    assert_eq!(
-                        model.get("failure").unwrap(),
-                        &s("abstention"),
-                        "case {name} records a failure other than abstention beside its other verdict"
-                    );
-                    assert_eq!(
-                        model.get("fallback").unwrap(),
-                        &s("abstention"),
-                        "case {name} records a fallback other than abstention beside its other verdict"
-                    );
-                } else {
-                    assert_eq!(
-                        model.get("failure").unwrap(),
-                        &Value::Null,
-                        "case {name} records a failure beside its verdict"
-                    );
-                }
+                let policy = load_policy(field(&fixture, "policy")).unwrap();
+                let call = field(&fixture, "call");
+                let at = field(&fixture, "at").as_str().unwrap();
+                let transport = StubTransport::replying(body);
+                let decision =
+                    evaluate_with_transport(Some(&policy), None, call, at, Some(&transport));
+                let produced = field(&decision, "model");
                 assert_eq!(
+                    produced.get("failure").unwrap(),
+                    model.get("failure").unwrap(),
+                    "case {name} records a failure other than the class \
+                     the production path derives from its reply"
+                );
+                assert_eq!(
+                    produced.get("fallback").unwrap(),
+                    model.get("fallback").unwrap(),
+                    "case {name} records a fallback other than the one \
+                     the production path derives from its reply"
+                );
+                assert_eq!(
+                    produced.get("verdict").unwrap(),
                     model.get("verdict").unwrap(),
-                    &s(&choice),
-                    "case {name} records a verdict other than the label its reply chooses"
+                    "case {name} records a verdict other than the label \
+                     the production path derives from its reply"
                 );
                 assert_eq!(
+                    produced.get("confidence").unwrap(),
                     model.get("confidence").unwrap(),
-                    probabilities.get(&choice).unwrap(),
-                    "case {name} records a confidence other than the probability of its chosen label"
+                    "case {name} records a confidence other than the one \
+                     the production path derives from its reply"
                 );
                 assert_eq!(
+                    produced.get("probabilities").unwrap(),
                     model.get("probabilities").unwrap(),
-                    &probabilities,
-                    "case {name} records probabilities other than the map its reply carries"
+                    "case {name} records probabilities other than the map \
+                     the production path derives from its reply"
                 );
             }
             other => panic!("case {name} carries a reply of no stated form {other:?}"),
@@ -3411,6 +3540,9 @@ fn the_doctrine_wording_stands_in_the_contract_and_the_exhibit() {
         "at the denominator of sixty",
         "an exact completeness measurement of the deterministic combination and classification code over the designed population",
         "no sentence of this contract states it as sixty independent observations",
+        "Every presentation records the fallback outcome of the policy it carries, escalate under the queue form",
+        "the seam inside arm's twelve calls presented once under each of the five failure classes in the grammar order",
+        "silence and malformed and abstention and transport and no transport",
         "its deny verdict at 0.53, landing escalate",
         "a plain credential read in the control shape drawing a deny verdict below 0.79",
         "The question reopens when a recorded population shows either of two readings, a plain credential read in the control shape drawing a deny verdict below 0.79, or deny verdicts on the credential bearing configuration read standing between 0.62 and 0.74 in a single recorded draw outnumbering that draw's deny verdicts on the same read at or above 0.76.",
