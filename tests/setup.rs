@@ -437,6 +437,9 @@ fn contract_obligations_carry_their_substance() {
         "exactly at the threshold clears the threshold",
         "The named set therefore bounds nothing",
         "sixty distinct cases over forty eight distinct calls",
+        "at the denominator of 48",
+        "stands as a property of its window recording",
+        "24 presentations over 12 distinct calls",
     ] {
         assert!(text.contains(phrase), "{phrase}");
     }
