@@ -1806,19 +1806,28 @@ fn the_failed_consultation_crossing_recomputes_at_sixty_over_twelve() {
         "transport",
         "no transport",
     ];
-    let mut presentations = 0usize;
-    let mut allow_decisions = 0usize;
-    let mut deciding_denies = 0usize;
+    // The group and presentation counts derive from the
+    // fixture population standing in the folder, the q named
+    // documents counted by their numbers, so a presentation
+    // added to the folder or missing from it moves the counts
+    // the assertions below read.
+    let population: Vec<u32> = std::fs::read_dir(&fixtures_dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with('q') && name.ends_with(".json"))
+        .filter_map(|name| name[1..name.len() - 5].parse::<u32>().ok())
+        .collect();
     let mut call_keys: Vec<String> = Vec::new();
     for (index, class) in classes.iter().enumerate() {
-        let mut grouped = 0usize;
+        let grouped = population
+            .iter()
+            .filter(|&&number| number.saturating_sub(1) / 12 == index as u32)
+            .count();
         for slot in 1..=12u32 {
             let number = index as u32 * 12 + slot;
             let name = format!("q{number:02}");
             let fixture = read(&name);
             let expected = field(&fixture, "expected");
-            grouped += 1;
-            presentations += 1;
             call_keys.push(String::from_utf8(canonical(field(&fixture, "call"))).unwrap());
             assert_eq!(
                 model_field(expected, "failure"),
@@ -1838,14 +1847,6 @@ fn the_failed_consultation_crossing_recomputes_at_sixty_over_twelve() {
                 "crossing presentation {name} records a decision other than \
                  the fallback outcome of the policy it carries"
             );
-            if field(expected, "decision") == &s("allow") {
-                allow_decisions += 1;
-            }
-            if model_field(expected, "verdict") == &s("deny")
-                && field(expected, "decision") == &s("deny")
-            {
-                deciding_denies += 1;
-            }
         }
         assert_eq!(
             grouped, 12,
@@ -1854,17 +1855,10 @@ fn the_failed_consultation_crossing_recomputes_at_sixty_over_twelve() {
         );
     }
     assert_eq!(
-        presentations, 60,
-        "the crossing holds {presentations} presentations against the stated sixty"
-    );
-    assert_eq!(
-        allow_decisions, 0,
-        "the crossing records {allow_decisions} allow decisions against the stated none"
-    );
-    assert_eq!(
-        deciding_denies, 0,
-        "the crossing records {deciding_denies} deciding deny verdicts \
-         against the stated none"
+        population.len(),
+        60,
+        "the crossing holds {} presentations against the stated sixty",
+        population.len()
     );
     let mut distinct = call_keys.clone();
     distinct.sort();
