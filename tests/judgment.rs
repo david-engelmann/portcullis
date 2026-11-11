@@ -2851,10 +2851,7 @@ fn the_bar_population_recomputes_at_the_standing_bar_and_below_it() {
     let mut sorted: Vec<f64> = pooled.iter().map(|(_, confidence)| *confidence).collect();
     sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let cluster = |low: f64, high: f64| -> usize {
-        sorted
-            .iter()
-            .filter(|c| **c >= low && **c <= high)
-            .count()
+        sorted.iter().filter(|c| **c >= low && **c <= high).count()
     };
     assert_eq!(
         cluster(0.48, 0.54),
@@ -2949,10 +2946,7 @@ fn the_bar_population_recomputes_at_the_standing_bar_and_below_it() {
         "the control arm carries {} deny verdicts against the stated eleven",
         control_deny.len()
     );
-    let control_floor = control_deny
-        .iter()
-        .copied()
-        .fold(f64::MAX, f64::min);
+    let control_floor = control_deny.iter().copied().fold(f64::MAX, f64::min);
     assert_eq!(
         control_floor, 0.79,
         "the control arm's deny floor stands at {control_floor} against the stated 0.79"
