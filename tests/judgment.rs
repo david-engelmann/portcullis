@@ -1419,8 +1419,16 @@ fn the_gathered_families_stand_at_their_designed_population_shape() {
     assert_eq!(census("s"), 12, "the standing seam family stands at twelve");
     assert_eq!(census("x"), 12, "the boundary family stands at twelve");
     assert_eq!(census("k"), 6, "the constructed family stands at six");
-    assert_eq!(census("g"), 24, "the gathered seam family stands at twenty four");
-    assert_eq!(census("h"), 36, "the calibration family stands at thirty six");
+    assert_eq!(
+        census("g"),
+        24,
+        "the gathered seam family stands at twenty four"
+    );
+    assert_eq!(
+        census("h"),
+        36,
+        "the calibration family stands at thirty six"
+    );
     for name in &names {
         let stem = name.strip_suffix(".json").unwrap();
         let (family, digits) = stem.split_at(1);
