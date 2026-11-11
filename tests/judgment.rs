@@ -1942,16 +1942,25 @@ fn the_failed_consultation_crossing_recomputes_at_sixty_over_twelve() {
 #[test]
 fn the_recorded_replies_recompute_the_expected_model_blocks() {
     // The reply strength population pin, discharging residual
-    // R17 at its named seat. Every recorded case in the corpus
-    // has its expected verdict and confidence re-derived from
-    // its recorded reply body under the wire grammar, and the
-    // re-derived pair is asserted against the fixture expected
-    // block. A consistent re-recording inside an expected
-    // block alone therefore fails this pin. The transport and
-    // no transport presentations of the induced family carry
-    // the stated absence form and step over the verdict
-    // derivation, asserting their recorded class fields in its
-    // place, as their pin paragraph states.
+    // R17 at its named seat and consolidated under residual
+    // R21 in Round 20. Every recorded case in the corpus is
+    // decided through the production judging path, its
+    // recorded reply body handed to the standing fixture
+    // transport form this suite uses and the production entry
+    // point called on the case's own recorded policy and
+    // call, and the verdict and confidence and probabilities
+    // triple the production classification and the combination
+    // rule together produce is asserted against the fixture
+    // expected model block, together with the failure and
+    // fallback fields the production record carries. A
+    // consistent re-recording inside an expected block alone
+    // therefore fails this pin, and a grammar change in the
+    // library is measured against the recorded expectations
+    // here rather than mirrored by hand in test code. The
+    // transport and no transport presentations of the induced
+    // family carry the stated absence form and step over the
+    // production derivation, asserting their recorded class
+    // fields in its place, as their pin paragraph states.
     let fixtures_dir = root().join("tests").join("fixtures").join("judgment");
     let mut names: Vec<String> = std::fs::read_dir(&fixtures_dir)
         .unwrap()
@@ -2005,86 +2014,42 @@ fn the_recorded_replies_recompute_the_expected_model_blocks() {
                 assert_failure(class);
             }
             Value::Str(body) => {
-                if body.trim().is_empty() {
-                    assert_failure("silence");
-                    continue;
-                }
-                let document = match strict_parse(body) {
-                    Ok(document) => document,
-                    Err(_) => {
-                        assert_failure("malformed");
-                        continue;
-                    }
-                };
-                let entry = match document.get("answers").and_then(|a| a.get("verdict")) {
-                    None => {
-                        assert_failure("silence");
-                        continue;
-                    }
-                    Some(entry) => entry,
-                };
-                let choice = match entry.get("choice") {
-                    Some(Value::Str(choice))
-                        if ["allow", "deny", "escalate", "other"].contains(&choice.as_str()) =>
-                    {
-                        choice.clone()
-                    }
-                    _ => {
-                        assert_failure("malformed");
-                        continue;
-                    }
-                };
-                let probabilities = match entry.get("probabilities") {
-                    Some(probabilities)
-                        if probabilities
-                            .as_object()
-                            .is_some_and(|pairs| pairs.len() == 4)
-                            && ["allow", "deny", "escalate", "other"].iter().all(|label| {
-                                matches!(probabilities.get(label),
-                                    Some(Value::Float(number)) if (0.0..=1.0).contains(number))
-                                    || matches!(probabilities.get(label),
-                                        Some(Value::Int(text)) if text.parse::<f64>().is_ok_and(|n| (0.0..=1.0).contains(&n)))
-                            }) =>
-                    {
-                        probabilities.clone()
-                    }
-                    _ => {
-                        assert_failure("malformed");
-                        continue;
-                    }
-                };
-                if choice == "other" {
-                    assert_eq!(
-                        model.get("failure").unwrap(),
-                        &s("abstention"),
-                        "case {name} records a failure other than abstention beside its other verdict"
-                    );
-                    assert_eq!(
-                        model.get("fallback").unwrap(),
-                        &s("abstention"),
-                        "case {name} records a fallback other than abstention beside its other verdict"
-                    );
-                } else {
-                    assert_eq!(
-                        model.get("failure").unwrap(),
-                        &Value::Null,
-                        "case {name} records a failure beside its verdict"
-                    );
-                }
+                let policy = load_policy(field(&fixture, "policy")).unwrap();
+                let call = field(&fixture, "call");
+                let at = field(&fixture, "at").as_str().unwrap();
+                let transport = StubTransport::replying(body);
+                let decision =
+                    evaluate_with_transport(Some(&policy), None, call, at, Some(&transport));
+                let produced = field(&decision, "model");
                 assert_eq!(
+                    produced.get("failure").unwrap(),
+                    model.get("failure").unwrap(),
+                    "case {name} records a failure other than the class \
+                     the production path derives from its reply"
+                );
+                assert_eq!(
+                    produced.get("fallback").unwrap(),
+                    model.get("fallback").unwrap(),
+                    "case {name} records a fallback other than the one \
+                     the production path derives from its reply"
+                );
+                assert_eq!(
+                    produced.get("verdict").unwrap(),
                     model.get("verdict").unwrap(),
-                    &s(&choice),
-                    "case {name} records a verdict other than the label its reply chooses"
+                    "case {name} records a verdict other than the label \
+                     the production path derives from its reply"
                 );
                 assert_eq!(
+                    produced.get("confidence").unwrap(),
                     model.get("confidence").unwrap(),
-                    probabilities.get(&choice).unwrap(),
-                    "case {name} records a confidence other than the probability of its chosen label"
+                    "case {name} records a confidence other than the one \
+                     the production path derives from its reply"
                 );
                 assert_eq!(
+                    produced.get("probabilities").unwrap(),
                     model.get("probabilities").unwrap(),
-                    &probabilities,
-                    "case {name} records probabilities other than the map its reply carries"
+                    "case {name} records probabilities other than the map \
+                     the production path derives from its reply"
                 );
             }
             other => panic!("case {name} carries a reply of no stated form {other:?}"),
