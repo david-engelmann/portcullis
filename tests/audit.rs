@@ -243,8 +243,37 @@ fn build_mixed_log(log_path: &Path) -> Vec<Value> {
         let policy = load_policy(field(&fixture, "policy")).unwrap();
         let call = field(&fixture, "call");
         let at = field(&fixture, "at").as_str().unwrap();
-        let reply = field(&fixture, "reply").as_str().unwrap();
         let expected = field(&fixture, "expected");
+        if field(&fixture, "reply") == &Value::Null {
+            // The stated absence form of the Round 18 induced
+            // family, stepped over here in the same manner as
+            // the judgment replay pin steps over it. A transport
+            // presentation decides through a fixture transport
+            // holding no reply for its request, and a no
+            // transport presentation decides with no transport
+            // standing at all.
+            let failure = expected
+                .get("model")
+                .and_then(|model| model.get("failure"))
+                .and_then(|failure| failure.as_str())
+                .unwrap_or("");
+            let decision = if failure == "transport" {
+                let transport = FixtureTransport::new(vec![]);
+                evaluate_with_transport(Some(&policy), None, call, at, Some(&transport))
+            } else if failure == "no transport" {
+                evaluate(Some(&policy), None, call, at)
+            } else {
+                panic!(
+                    "fixture {} carries a null reply under no seam class the absence form names",
+                    path.display()
+                );
+            };
+            assert_eq!(canonical(&decision), canonical(expected));
+            append_decision(log_path, &decision).unwrap();
+            records.push(decision);
+            continue;
+        }
+        let reply = field(&fixture, "reply").as_str().unwrap();
         let capture = StubTransport::replying(reply);
         evaluate_with_transport(Some(&policy), None, call, at, Some(&capture));
         let requests = capture.requests.borrow();

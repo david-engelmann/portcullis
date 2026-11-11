@@ -1370,8 +1370,54 @@ fn the_recorded_fixtures_replay_byte_for_byte() {
         let policy = load_policy(field(&fixture, "policy")).unwrap();
         let call = field(&fixture, "call");
         let at = field(&fixture, "at").as_str().unwrap();
-        let reply = field(&fixture, "reply").as_str().unwrap();
         let expected = field(&fixture, "expected");
+        if field(&fixture, "reply") == &Value::Null {
+            // The stated absence form of the Round 18 induced
+            // family. A presentation whose reply stands null in
+            // its document carries no readable reply by
+            // construction, and it replays at the seam its
+            // recorded class names, a failing transport for the
+            // transport class and no transport at all for the
+            // no transport class, never through a reply body.
+            let failure = model_field(expected, "failure")
+                .as_str()
+                .unwrap_or("")
+                .to_string();
+            if failure == "transport" {
+                let capture = StubTransport::failing();
+                let decision =
+                    evaluate_with_transport(Some(&policy), None, call, at, Some(&capture));
+                let requests = capture.requests.borrow();
+                assert_eq!(requests.len(), 1, "fixture {}", path.display());
+                assert_eq!(
+                    String::from_utf8(canonical(&requests[0])).unwrap(),
+                    field(&fixture, "request").as_str().unwrap(),
+                    "the built request differs from the recorded request in fixture {}",
+                    path.display()
+                );
+                assert_eq!(
+                    canonical(&decision),
+                    canonical(expected),
+                    "the replayed decision differs in fixture {}",
+                    path.display()
+                );
+            } else if failure == "no transport" {
+                let decision = evaluate(Some(&policy), None, call, at);
+                assert_eq!(
+                    canonical(&decision),
+                    canonical(expected),
+                    "the replayed decision differs in fixture {}",
+                    path.display()
+                );
+            } else {
+                panic!(
+                    "fixture {} carries a null reply under no seam class the absence form names",
+                    path.display()
+                );
+            }
+            continue;
+        }
+        let reply = field(&fixture, "reply").as_str().unwrap();
         let capture = StubTransport::replying(reply);
         let decision = evaluate_with_transport(Some(&policy), None, call, at, Some(&capture));
         let requests = capture.requests.borrow();
@@ -1408,25 +1454,29 @@ fn the_gathered_families_stand_at_their_designed_population_shape() {
         .collect();
     names.sort();
     let manifest_text = std::fs::read_to_string(fixtures_dir.join("MANIFEST.md")).unwrap();
-    let missing_line = manifest_text
-        .lines()
-        .find(|line| line.contains("standing missing under the transport rule"))
-        .unwrap_or("");
-    let missing_for = |initial: &str| -> usize {
-        missing_line
-            .split(|c: char| !c.is_alphanumeric())
-            .filter(|token| {
-                token.len() == 3
-                    && token.starts_with(initial)
-                    && token[1..].chars().all(|c| c.is_ascii_digit())
-            })
-            .count()
+    // The missing presentation accounting stands repaired in
+    // Round 18, discharging the Round 13 two axis review Minor
+    // on this pin. Counts are enumerated on named lines in the
+    // MANIFEST Round 18 section and read as numbers from those
+    // lines. No count is parsed by token shape, so a case name
+    // standing in a prose line is never read as a count.
+    let named_count = |label: &str| -> usize {
+        let line = manifest_text
+            .lines()
+            .find(|line| line.contains(label))
+            .unwrap_or_else(|| panic!("the MANIFEST carries no named count line for {label}"));
+        line.trim_end_matches('.')
+            .rsplit(' ')
+            .next()
+            .and_then(|digits| digits.parse::<usize>().ok())
+            .unwrap_or_else(|| panic!("the named count line for {label} carries no number"))
     };
-    let missing = missing_for("j");
+    let missing = named_count("Named count, failure family j standing missing:");
+    let designed_total = named_count("Named count, designed population total:");
     assert_eq!(
         names.len(),
-        186 - missing,
-        "the judgment fixture folder holds {} cases against the designed population of 186 less the {missing} presentations standing missing",
+        designed_total - missing,
+        "the judgment fixture folder holds {} cases against the designed population of {designed_total} less the {missing} presentations standing missing",
         names.len()
     );
     let census = |prefix: &str| names.iter().filter(|name| name.starts_with(prefix)).count();
@@ -1447,9 +1497,20 @@ fn the_gathered_families_stand_at_their_designed_population_shape() {
     );
     assert_eq!(
         census("j"),
-        24 - missing_for("j"),
+        24 - missing,
         "the failure family stands at twenty four presentations less those standing missing"
     );
+    assert_eq!(
+        census("q"),
+        named_count("Named count, induced family q:"),
+        "the induced family stands at the count its named line states"
+    );
+    assert_eq!(
+        census("r"),
+        named_count("Named count, control family r:"),
+        "the control family stands at the count its named line states"
+    );
+
     assert_eq!(
         census("m"),
         24,
@@ -1471,6 +1532,8 @@ fn the_gathered_families_stand_at_their_designed_population_shape() {
                 "g" => (1..=24).contains(&number),
                 "h" => (1..=36).contains(&number),
                 "j" | "m" | "p" => (1..=24).contains(&number),
+                "q" => (1..=60).contains(&number),
+                "r" => (1..=12).contains(&number),
                 _ => false,
             };
         assert!(
@@ -1551,6 +1614,359 @@ fn the_gathered_families_stand_at_their_designed_population_shape() {
         ),
         "the Round 15 section records that the replies and the decision content stand untouched"
     );
+    assert_eq!(
+        manifest.matches("## Round 18").count(),
+        1,
+        "the MANIFEST carries exactly one Round 18 section"
+    );
+    let section18 = manifest.split("## Round 18").nth(1).unwrap();
+    assert!(
+        section18.contains("q01 to q60"),
+        "the Round 18 section names the induced family"
+    );
+    assert!(
+        section18.contains("r01 to r12"),
+        "the Round 18 section names the control family"
+    );
+    assert!(
+        section18.contains("The evaluation leg"),
+        "the Round 18 section names the evaluation leg"
+    );
+    assert!(
+        section18.contains("constructed and induced rather than recorded"),
+        "the Round 18 section states the induced family as constructed on its face"
+    );
+}
+
+#[test]
+fn the_induced_family_presents_the_inside_arm_calls_unchanged() {
+    let fixtures_dir = root().join("tests").join("fixtures").join("judgment");
+    let read = |name: &str| -> Value {
+        strict_parse(&std::fs::read_to_string(fixtures_dir.join(format!("{name}.json"))).unwrap())
+            .unwrap()
+    };
+    for number in 1..=60u32 {
+        let name = format!("q{number:02}");
+        let inside = format!("g{:02}", (number - 1) % 12 + 1);
+        let induced_doc = read(&name);
+        let inside_doc = read(&inside);
+        assert_eq!(
+            canonical(field(&induced_doc, "call")),
+            canonical(field(&inside_doc, "call")),
+            "induced case {name} presents a call other than the call of the inside arm case {inside} it re-presents"
+        );
+        assert_eq!(
+            canonical(field(&induced_doc, "policy")),
+            canonical(field(&inside_doc, "policy")),
+            "induced case {name} presents a policy other than the policy of the inside arm case {inside} it re-presents"
+        );
+    }
+}
+
+#[test]
+fn the_induced_family_records_the_classes_it_induces() {
+    // The stepping behaviour over the designed absences stands
+    // stated here. The silence and malformed and abstention
+    // presentations carry a fabricated reply body and replay
+    // through the replying transport. The transport and no
+    // transport presentations carry the stated absence form, a
+    // reply field standing null, and replay at the seam their
+    // class names, a failing transport for the transport class
+    // and no transport at all for the no transport class. No
+    // presentation is stepped over by an existence check.
+    let fixtures_dir = root().join("tests").join("fixtures").join("judgment");
+    let classes = [
+        "silence",
+        "malformed",
+        "abstention",
+        "transport",
+        "no transport",
+    ];
+    for number in 1..=60u32 {
+        let name = format!("q{number:02}");
+        let induced = classes[((number - 1) / 12) as usize];
+        let fixture = strict_parse(
+            &std::fs::read_to_string(fixtures_dir.join(format!("{name}.json"))).unwrap(),
+        )
+        .unwrap();
+        let policy = load_policy(field(&fixture, "policy")).unwrap();
+        let call = field(&fixture, "call");
+        let at = field(&fixture, "at").as_str().unwrap();
+        let expected = field(&fixture, "expected");
+        let decision = match field(&fixture, "reply") {
+            Value::Str(reply) => {
+                let transport = StubTransport::replying(reply);
+                evaluate_with_transport(Some(&policy), None, call, at, Some(&transport))
+            }
+            Value::Null if induced == "transport" => {
+                let transport = StubTransport::failing();
+                evaluate_with_transport(Some(&policy), None, call, at, Some(&transport))
+            }
+            Value::Null if induced == "no transport" => evaluate(Some(&policy), None, call, at),
+            other => panic!("induced case {name} carries a reply of no stated form {other:?}"),
+        };
+        assert_eq!(
+            canonical(&decision),
+            canonical(expected),
+            "the recomputed record differs in induced case {name}"
+        );
+        assert_eq!(
+            model_field(&decision, "failure"),
+            &s(induced),
+            "induced case {name} records a failure class other than the class it induces"
+        );
+        assert_eq!(
+            field(&decision, "decision"),
+            &s("escalate"),
+            "induced case {name} records a decision other than the fallback outcome of its policy"
+        );
+    }
+}
+
+#[test]
+fn the_induced_family_census_reads_the_named_count_lines() {
+    let fixtures_dir = root().join("tests").join("fixtures").join("judgment");
+    let manifest = std::fs::read_to_string(fixtures_dir.join("MANIFEST.md")).unwrap();
+    let section18 = manifest.split("## Round 18").nth(1).unwrap().to_string();
+    let named_count = |label: &str| -> usize {
+        let line = section18
+            .lines()
+            .find(|line| line.contains(label))
+            .unwrap_or_else(|| {
+                panic!("the Round 18 section carries no named count line for {label}")
+            });
+        line.trim_end_matches('.')
+            .rsplit(' ')
+            .next()
+            .and_then(|digits| digits.parse::<usize>().ok())
+            .unwrap_or_else(|| panic!("the named count line for {label} carries no number"))
+    };
+    let classes = [
+        "silence",
+        "malformed",
+        "abstention",
+        "transport",
+        "no transport",
+    ];
+    let mut family = 0usize;
+    for class in classes {
+        let mut count = 0usize;
+        for number in 1..=60u32 {
+            let name = format!("q{number:02}");
+            let fixture = strict_parse(
+                &std::fs::read_to_string(fixtures_dir.join(format!("{name}.json"))).unwrap(),
+            )
+            .unwrap();
+            if model_field(field(&fixture, "expected"), "failure") == &s(class) {
+                count += 1;
+            }
+        }
+        assert_eq!(
+            count,
+            named_count(&format!("Named count, induced class {class}:")),
+            "the induced family records {count} presentations of class {class} against its named line"
+        );
+        family += count;
+    }
+    assert_eq!(
+        family,
+        named_count("Named count, induced family q:"),
+        "the induced family records {family} presentations against its named line"
+    );
+}
+
+#[test]
+fn the_recorded_replies_recompute_the_expected_model_blocks() {
+    // The reply strength population pin, discharging residual
+    // R17 at its named seat. Every recorded case in the corpus
+    // has its expected verdict and confidence re-derived from
+    // its recorded reply body under the wire grammar, and the
+    // re-derived pair is asserted against the fixture expected
+    // block. A consistent re-recording inside an expected
+    // block alone therefore fails this pin. The transport and
+    // no transport presentations of the induced family carry
+    // the stated absence form and step over the verdict
+    // derivation, asserting their recorded class fields in its
+    // place, as their pin paragraph states.
+    let fixtures_dir = root().join("tests").join("fixtures").join("judgment");
+    let mut names: Vec<String> = std::fs::read_dir(&fixtures_dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".json"))
+        .collect();
+    names.sort();
+    assert_eq!(
+        names.len(),
+        258,
+        "the corpus stands at its designed population"
+    );
+    for name in &names {
+        let fixture =
+            strict_parse(&std::fs::read_to_string(fixtures_dir.join(name)).unwrap()).unwrap();
+        let expected = field(&fixture, "expected");
+        let model = field(expected, "model");
+        let assert_failure = |class: &str| {
+            assert_eq!(
+                model.get("failure").unwrap(),
+                &s(class),
+                "case {name} records a failure other than the class its reply induces"
+            );
+            assert_eq!(
+                model.get("fallback").unwrap(),
+                &s(class),
+                "case {name} records a fallback other than the class its reply induces"
+            );
+            assert_eq!(
+                model.get("verdict").unwrap(),
+                &Value::Null,
+                "case {name} records a verdict beside its failure class"
+            );
+            assert_eq!(
+                model.get("confidence").unwrap(),
+                &Value::Null,
+                "case {name} records a confidence beside its failure class"
+            );
+        };
+        match field(&fixture, "reply") {
+            Value::Null => {
+                let class = model
+                    .get("failure")
+                    .unwrap()
+                    .as_str()
+                    .expect("an absent reply records its seam class by name");
+                assert!(
+                    class == "transport" || class == "no transport",
+                    "case {name} carries an absent reply under the class {class} the absence form does not name"
+                );
+                assert_failure(class);
+            }
+            Value::Str(body) => {
+                if body.trim().is_empty() {
+                    assert_failure("silence");
+                    continue;
+                }
+                let document = match strict_parse(body) {
+                    Ok(document) => document,
+                    Err(_) => {
+                        assert_failure("malformed");
+                        continue;
+                    }
+                };
+                let entry = match document.get("answers").and_then(|a| a.get("verdict")) {
+                    None => {
+                        assert_failure("silence");
+                        continue;
+                    }
+                    Some(entry) => entry,
+                };
+                let choice = match entry.get("choice") {
+                    Some(Value::Str(choice))
+                        if ["allow", "deny", "escalate", "other"].contains(&choice.as_str()) =>
+                    {
+                        choice.clone()
+                    }
+                    _ => {
+                        assert_failure("malformed");
+                        continue;
+                    }
+                };
+                let probabilities = match entry.get("probabilities") {
+                    Some(probabilities)
+                        if probabilities
+                            .as_object()
+                            .is_some_and(|pairs| pairs.len() == 4)
+                            && ["allow", "deny", "escalate", "other"].iter().all(|label| {
+                                matches!(probabilities.get(label),
+                                    Some(Value::Float(number)) if (0.0..=1.0).contains(number))
+                                    || matches!(probabilities.get(label),
+                                        Some(Value::Int(text)) if text.parse::<f64>().is_ok_and(|n| (0.0..=1.0).contains(&n)))
+                            }) =>
+                    {
+                        probabilities.clone()
+                    }
+                    _ => {
+                        assert_failure("malformed");
+                        continue;
+                    }
+                };
+                if choice == "other" {
+                    assert_eq!(
+                        model.get("failure").unwrap(),
+                        &s("abstention"),
+                        "case {name} records a failure other than abstention beside its other verdict"
+                    );
+                    assert_eq!(
+                        model.get("fallback").unwrap(),
+                        &s("abstention"),
+                        "case {name} records a fallback other than abstention beside its other verdict"
+                    );
+                } else {
+                    assert_eq!(
+                        model.get("failure").unwrap(),
+                        &Value::Null,
+                        "case {name} records a failure beside its verdict"
+                    );
+                }
+                assert_eq!(
+                    model.get("verdict").unwrap(),
+                    &s(&choice),
+                    "case {name} records a verdict other than the label its reply chooses"
+                );
+                assert_eq!(
+                    model.get("confidence").unwrap(),
+                    probabilities.get(&choice).unwrap(),
+                    "case {name} records a confidence other than the probability of its chosen label"
+                );
+                assert_eq!(
+                    model.get("probabilities").unwrap(),
+                    &probabilities,
+                    "case {name} records probabilities other than the map its reply carries"
+                );
+            }
+            other => panic!("case {name} carries a reply of no stated form {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn the_recorded_policies_carry_the_threshold_and_escalation_the_doctrine_states() {
+    // The threshold census, taken at this round checkpoint as
+    // residual R18 prices it. No standing pin censused the
+    // recorded policies threshold values, so a threshold
+    // mutation in one fixture that crossed nothing escaped
+    // every pin, the bar pin not reading policy bytes and the
+    // replay pin recomputing under the fixture own threshold.
+    let fixtures_dir = root().join("tests").join("fixtures").join("judgment");
+    let mut names: Vec<String> = std::fs::read_dir(&fixtures_dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".json"))
+        .collect();
+    names.sort();
+    assert_eq!(
+        names.len(),
+        258,
+        "the corpus stands at its designed population"
+    );
+    for name in &names {
+        let fixture =
+            strict_parse(&std::fs::read_to_string(fixtures_dir.join(name)).unwrap()).unwrap();
+        let judgment = field(field(&fixture, "policy"), "judgment");
+        let threshold = match judgment.get("threshold").unwrap() {
+            Value::Float(number) => *number,
+            Value::Int(text) => text.parse::<f64>().unwrap(),
+            other => panic!("case {name} carries a threshold of no stated form {other:?}"),
+        };
+        assert_eq!(
+            threshold, 0.75,
+            "case {name} carries a policy threshold of {threshold} against the stated 0.75"
+        );
+        assert_eq!(
+            judgment.get("escalation").unwrap(),
+            &s("queue"),
+            "case {name} carries an escalation other than queue"
+        );
+    }
 }
 
 #[test]
