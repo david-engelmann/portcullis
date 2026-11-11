@@ -1398,6 +1398,71 @@ fn the_recorded_fixtures_replay_byte_for_byte() {
     }
 }
 
+#[test]
+fn the_gathered_families_stand_at_their_designed_population_shape() {
+    let fixtures_dir = root().join("tests").join("fixtures").join("judgment");
+    let mut names: Vec<String> = std::fs::read_dir(&fixtures_dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".json"))
+        .collect();
+    names.sort();
+    assert_eq!(
+        names.len(),
+        114,
+        "the judgment fixture folder holds {} cases against the designed population of 114",
+        names.len()
+    );
+    let census = |prefix: &str| names.iter().filter(|name| name.starts_with(prefix)).count();
+    assert_eq!(census("a"), 12, "the allow family stands at twelve");
+    assert_eq!(census("n"), 12, "the deny family stands at twelve");
+    assert_eq!(census("s"), 12, "the standing seam family stands at twelve");
+    assert_eq!(census("x"), 12, "the boundary family stands at twelve");
+    assert_eq!(census("k"), 6, "the constructed family stands at six");
+    assert_eq!(
+        census("g"),
+        24,
+        "the gathered seam family stands at twenty four"
+    );
+    assert_eq!(
+        census("h"),
+        36,
+        "the calibration family stands at thirty six"
+    );
+    for name in &names {
+        let stem = name.strip_suffix(".json").unwrap();
+        let (family, digits) = stem.split_at(1);
+        let number: u32 = digits.parse().unwrap_or(0);
+        let in_form = digits.len() == 2
+            && match family {
+                "a" | "n" | "s" | "x" => (1..=12).contains(&number),
+                "k" => (1..=6).contains(&number),
+                "g" => (1..=24).contains(&number),
+                "h" => (1..=36).contains(&number),
+                _ => false,
+            };
+        assert!(
+            in_form,
+            "fixture {name} stands outside the standing form of its family"
+        );
+    }
+    let manifest = std::fs::read_to_string(fixtures_dir.join("MANIFEST.md")).unwrap();
+    assert_eq!(
+        manifest.matches("## Round 10").count(),
+        1,
+        "the MANIFEST carries exactly one Round 10 section"
+    );
+    let section = manifest.split("## Round 10").nth(1).unwrap();
+    assert!(
+        section.contains("g01 to g24"),
+        "the Round 10 section names the gathered seam family"
+    );
+    assert!(
+        section.contains("h01 to h36"),
+        "the Round 10 section names the calibration family"
+    );
+}
+
 // --- the referral interior -----------------------------------------------------
 
 use sha2::{Digest, Sha256};
