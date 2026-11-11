@@ -434,6 +434,9 @@ fn contract_obligations_carry_their_substance() {
         "a policy that stands loaded",
         "holds exactly the keys format and kind and method and host and port",
         "with keys sorted at every level",
+        "exactly at the threshold clears the threshold",
+        "The named set therefore bounds nothing",
+        "sixty distinct cases over forty eight distinct calls",
     ] {
         assert!(text.contains(phrase), "{phrase}");
     }
