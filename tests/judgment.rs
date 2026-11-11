@@ -1621,7 +1621,10 @@ fn state_from_the_contract_template(
         lines.push(format!("{sentence}."));
     }
     lines.push(String::new());
-    lines.push(exhibit_text(sections, "The state closing text, standing unamended in Round 12"));
+    lines.push(exhibit_text(
+        sections,
+        "The state closing text, standing unamended in Round 12",
+    ));
     lines.join("\n")
 }
 
@@ -1648,17 +1651,32 @@ fn the_exhibit_prints_the_doctrine_texts_the_builder_sends() {
     let requests = transport.requests.borrow();
     let request = &requests[0];
     let verdict = field(request, "questions").get("verdict").unwrap();
-    let instructions = exhibit_text(&sections, "The verdict instructions, as amended in Round 12");
+    let instructions = exhibit_text(
+        &sections,
+        "The verdict instructions, as amended in Round 12",
+    );
     assert_eq!(
         field(verdict, "instructions").as_str().unwrap(),
         instructions.as_str()
     );
     let criteria = field(verdict, "criteria");
     for (label, heading) in [
-        ("allow", "The criterion of allow, standing unamended in Round 12"),
-        ("deny", "The criterion of deny, standing unamended in Round 12"),
-        ("escalate", "The criterion of escalate, standing unamended in Round 12"),
-        ("other", "The criterion of other, standing unamended in Round 12"),
+        (
+            "allow",
+            "The criterion of allow, standing unamended in Round 12",
+        ),
+        (
+            "deny",
+            "The criterion of deny, standing unamended in Round 12",
+        ),
+        (
+            "escalate",
+            "The criterion of escalate, standing unamended in Round 12",
+        ),
+        (
+            "other",
+            "The criterion of other, standing unamended in Round 12",
+        ),
     ] {
         let text = exhibit_text(&sections, heading);
         assert_eq!(
@@ -1668,7 +1686,10 @@ fn the_exhibit_prints_the_doctrine_texts_the_builder_sends() {
         );
     }
     let risk = field(request, "questions").get("risk").unwrap();
-    let risk_instructions = exhibit_text(&sections, "The risk instructions, standing unamended in Round 12");
+    let risk_instructions = exhibit_text(
+        &sections,
+        "The risk instructions, standing unamended in Round 12",
+    );
     assert_eq!(
         field(risk, "instructions").as_str().unwrap(),
         risk_instructions.as_str()
@@ -1681,7 +1702,10 @@ fn the_exhibit_prints_the_doctrine_texts_the_builder_sends() {
         .collect();
     assert_eq!(levels, exhibit_levels(&sections));
     let state = field(request, "state").as_str().unwrap();
-    let closing = exhibit_text(&sections, "The state closing text, standing unamended in Round 12");
+    let closing = exhibit_text(
+        &sections,
+        "The state closing text, standing unamended in Round 12",
+    );
     assert_eq!(state.rsplit("\n\n").next().unwrap(), closing.as_str());
     // The scratch copy arm the exhibit paragraph of PC-26
     // names. One text of a scratch copy of the exhibit
@@ -1702,7 +1726,10 @@ fn the_exhibit_prints_the_doctrine_texts_the_builder_sends() {
     assert_ne!(amended_source, exhibit_source);
     std::fs::write(&amended_path, &amended_source).unwrap();
     let amended_sections = exhibit_sections_from(&amended_path);
-    let amended_instructions = exhibit_text(&amended_sections, "The verdict instructions, as amended in Round 12");
+    let amended_instructions = exhibit_text(
+        &amended_sections,
+        "The verdict instructions, as amended in Round 12",
+    );
     assert_ne!(
         field(verdict, "instructions").as_str().unwrap(),
         amended_instructions.as_str(),
@@ -1797,7 +1824,10 @@ fn the_interpreter_line_stands_in_the_state_exactly_where_the_contract_places_it
     let expected_line = format!("{sentence}.");
     assert_eq!(lines[9], expected_line.as_str());
     assert_eq!(lines[10], "");
-    let closing = exhibit_text(&sections, "The state closing text, standing unamended in Round 12");
+    let closing = exhibit_text(
+        &sections,
+        "The state closing text, standing unamended in Round 12",
+    );
     assert_eq!(lines[11], closing.as_str());
 }
 
@@ -1938,22 +1968,40 @@ fn stranger_assemble(
             Value::obj(vec![
                 (
                     "allow",
-                    s(&exhibit_text(sections, "The criterion of allow, standing unamended in Round 12")),
+                    s(&exhibit_text(
+                        sections,
+                        "The criterion of allow, standing unamended in Round 12",
+                    )),
                 ),
-                ("deny", s(&exhibit_text(sections, "The criterion of deny, standing unamended in Round 12"))),
+                (
+                    "deny",
+                    s(&exhibit_text(
+                        sections,
+                        "The criterion of deny, standing unamended in Round 12",
+                    )),
+                ),
                 (
                     "escalate",
-                    s(&exhibit_text(sections, "The criterion of escalate, standing unamended in Round 12")),
+                    s(&exhibit_text(
+                        sections,
+                        "The criterion of escalate, standing unamended in Round 12",
+                    )),
                 ),
                 (
                     "other",
-                    s(&exhibit_text(sections, "The criterion of other, standing unamended in Round 12")),
+                    s(&exhibit_text(
+                        sections,
+                        "The criterion of other, standing unamended in Round 12",
+                    )),
                 ),
             ]),
         ),
         (
             "instructions",
-            s(&exhibit_text(sections, "The verdict instructions, as amended in Round 12")),
+            s(&exhibit_text(
+                sections,
+                "The verdict instructions, as amended in Round 12",
+            )),
         ),
         ("type", s("choice")),
     ]);
@@ -1967,7 +2015,10 @@ fn stranger_assemble(
         ),
         (
             "instructions",
-            s(&exhibit_text(sections, "The risk instructions, standing unamended in Round 12")),
+            s(&exhibit_text(
+                sections,
+                "The risk instructions, standing unamended in Round 12",
+            )),
         ),
         ("type", s("score")),
     ]);
@@ -2118,8 +2169,7 @@ fn doctrine_cases() -> Vec<DoctrineCase> {
         let count = if prefix == "g" { 24 } else { 36 };
         for index in 1..=count {
             let name = format!("{prefix}{index:02}");
-            let text =
-                std::fs::read_to_string(fixtures_dir.join(format!("{name}.json"))).unwrap();
+            let text = std::fs::read_to_string(fixtures_dir.join(format!("{name}.json"))).unwrap();
             let fixture = strict_parse(&text).unwrap();
             let expected = field(&fixture, "expected");
             let model = field(expected, "model");
@@ -2135,10 +2185,7 @@ fn doctrine_cases() -> Vec<DoctrineCase> {
                 name,
                 verdict: verdict.to_string(),
                 confidence,
-                decision: field(expected, "decision")
-                    .as_str()
-                    .unwrap()
-                    .to_string(),
+                decision: field(expected, "decision").as_str().unwrap().to_string(),
             });
         }
     }
@@ -2334,7 +2381,10 @@ fn the_doctrine_wording_stands_in_the_contract_and_the_exhibit() {
         );
     }
     let sections = exhibit_sections();
-    let instructions = exhibit_text(&sections, "The verdict instructions, as amended in Round 12");
+    let instructions = exhibit_text(
+        &sections,
+        "The verdict instructions, as amended in Round 12",
+    );
     let passage = "A read of credential bearing material stands or falls with the purpose the state states for it.";
     assert!(
         instructions.contains(passage),
