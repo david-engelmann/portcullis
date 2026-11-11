@@ -121,6 +121,6 @@ fixture x10.json 4c17b00fd7c47e08ca06db4a25eb5d62597f01d63c8c521b7cb3f9a096f82e0
 fixture x11.json b395879d4b3bf372a959d31574a0a812bd4e1253d2672dd69575b382395c9daf identical
 fixture x12.json f468bae8f71ceb0911742e94350be2dc7d0e9412486422e805035e3b1db6c759 identical
 exhibit EXHIBIT.md 80b32d5b86bb22e21376156610e96ece0b7d7cbb133a141fef2c0d3dc6426b86 identical
-manifest MANIFEST.md 720e63bbefa9c657d6950dd344d2145353f2e313d7a873a8807422b3123ab972 differs from the pre-window digest 6b6b6c86612da0cd9ceaf1dc856e046170c5a38ac4abdfc428fce60995464bc3 only by the added Round 10 section. Removing the added section leaves a remainder that stands byte for byte as the pre-window text.
+manifest MANIFEST.md 069bc79e400cf86c966d9098df670c99b946b4120b386264a70e5c09024ee14d differs from the pre-window digest 6b6b6c86612da0cd9ceaf1dc856e046170c5a38ac4abdfc428fce60995464bc3 only by the added Round 10 section. Removing the added section leaves a remainder that stands byte for byte as the pre-window text.
 
 Freeze proof result. The proof stands. Every standing byte the listing names stands unchanged across the window and the evaluation.
