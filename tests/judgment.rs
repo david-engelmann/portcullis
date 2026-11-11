@@ -2989,6 +2989,7 @@ fn the_doctrine_wording_stands_in_the_contract_and_the_exhibit() {
         "in its own three cases, g04 and g05 and g06",
         "The deciding bar for deny verdicts on the credential bearing configuration read stands at 0.75",
         "a plain credential read in the control shape drawing a deny verdict below 0.79",
+        "The question reopens when a recorded population shows either of two readings, a plain credential read in the control shape drawing a deny verdict below 0.79, or deny verdicts on the credential bearing configuration read standing between 0.62 and 0.74 in a single recorded draw outnumbering that draw's deny verdicts on the same read at or above 0.76.",
     ] {
         assert!(
             contract.contains(phrase),
