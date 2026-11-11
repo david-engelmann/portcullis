@@ -1461,6 +1461,24 @@ fn the_gathered_families_stand_at_their_designed_population_shape() {
         section.contains("h01 to h36"),
         "the Round 10 section names the calibration family"
     );
+    assert_eq!(
+        manifest.matches("## Round 12").count(),
+        1,
+        "the MANIFEST carries exactly one Round 12 section"
+    );
+    let section12 = manifest.split("## Round 12").nth(1).unwrap();
+    for line in [
+        "The seam inside arm drew verdicts of 10 deny, 2 escalate and decisions of 9 deny, 3 escalate in its twelve.",
+        "The seam outside arm drew verdicts of 4 allow, 4 deny, 4 escalate and decisions of 1 allow, 1 deny, 10 escalate in its twelve.",
+        "The calibration target arm drew verdicts of 10 deny, 2 escalate and decisions of 7 deny, 5 escalate in its twelve.",
+        "The calibration purpose arm drew verdicts of 4 allow, 8 deny and decisions of 6 deny, 6 escalate in its twelve.",
+        "The calibration control arm drew verdicts of 11 deny, 1 escalate and decisions of 11 deny, 1 escalate in its twelve.",
+    ] {
+        assert!(
+            section12.contains(line),
+            "the Round 12 section carries no aggregate line {line}"
+        );
+    }
 }
 
 // --- the referral interior -----------------------------------------------------
