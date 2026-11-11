@@ -1887,15 +1887,21 @@ fn the_failed_consultation_crossing_recomputes_at_sixty_over_twelve() {
         distinct, inside_keys,
         "the crossing's distinct calls stand other than the seam inside arm calls g01 to g12"
     );
-    let mut verdicts: Vec<&str> = Vec::new();
-    let mut decisions: Vec<&str> = Vec::new();
+    let mut verdicts: Vec<String> = Vec::new();
+    let mut decisions: Vec<String> = Vec::new();
     for number in 1..=12u32 {
         let fixture = read(&format!("r{number:02}"));
         let expected = field(&fixture, "expected");
-        verdicts.push(model_field(expected, "verdict").as_str().unwrap());
-        decisions.push(field(expected, "decision").as_str().unwrap());
+        verdicts.push(
+            model_field(expected, "verdict")
+                .as_str()
+                .unwrap()
+                .to_string(),
+        );
+        decisions.push(field(expected, "decision").as_str().unwrap().to_string());
     }
-    let count = |values: &[&str], label: &str| values.iter().filter(|v| **v == label).count();
+    let count =
+        |values: &[String], label: &str| values.iter().filter(|v| v.as_str() == label).count();
     assert_eq!(
         count(&verdicts, "deny"),
         10,
