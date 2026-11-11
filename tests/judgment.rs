@@ -1407,10 +1407,26 @@ fn the_gathered_families_stand_at_their_designed_population_shape() {
         .filter(|name| name.ends_with(".json"))
         .collect();
     names.sort();
+    let manifest_text = std::fs::read_to_string(fixtures_dir.join("MANIFEST.md")).unwrap();
+    let missing_line = manifest_text
+        .lines()
+        .find(|line| line.contains("standing missing under the transport rule"))
+        .unwrap_or("");
+    let missing_for = |initial: &str| -> usize {
+        missing_line
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|token| {
+                token.len() == 3
+                    && token.starts_with(initial)
+                    && token[1..].chars().all(|c| c.is_ascii_digit())
+            })
+            .count()
+    };
+    let missing = missing_for("j") + missing_for("m") + missing_for("p");
     assert_eq!(
         names.len(),
-        114,
-        "the judgment fixture folder holds {} cases against the designed population of 114",
+        186 - missing,
+        "the judgment fixture folder holds {} cases against the designed population of 186 less the {missing} presentations standing missing",
         names.len()
     );
     let census = |prefix: &str| names.iter().filter(|name| name.starts_with(prefix)).count();
@@ -1429,6 +1445,21 @@ fn the_gathered_families_stand_at_their_designed_population_shape() {
         36,
         "the calibration family stands at thirty six"
     );
+    assert_eq!(
+        census("j"),
+        24 - missing_for("j"),
+        "the failure family stands at twenty four presentations less those standing missing"
+    );
+    assert_eq!(
+        census("m"),
+        24,
+        "the seam explanation family stands at twenty four"
+    );
+    assert_eq!(
+        census("p"),
+        24,
+        "the apportionment family stands at twenty four"
+    );
     for name in &names {
         let stem = name.strip_suffix(".json").unwrap();
         let (family, digits) = stem.split_at(1);
@@ -1439,6 +1470,7 @@ fn the_gathered_families_stand_at_their_designed_population_shape() {
                 "k" => (1..=6).contains(&number),
                 "g" => (1..=24).contains(&number),
                 "h" => (1..=36).contains(&number),
+                "j" | "m" | "p" => (1..=24).contains(&number),
                 _ => false,
             };
         assert!(
@@ -1479,6 +1511,163 @@ fn the_gathered_families_stand_at_their_designed_population_shape() {
             "the Round 12 section carries no aggregate line {line}"
         );
     }
+    assert_eq!(
+        manifest.matches("## Round 13").count(),
+        1,
+        "the MANIFEST carries exactly one Round 13 section"
+    );
+    let section13 = manifest.split("## Round 13").nth(1).unwrap();
+    assert!(
+        section13.contains("j01 to j24"),
+        "the Round 13 section names the failure family"
+    );
+    assert!(
+        section13.contains("m01 to m24"),
+        "the Round 13 section names the seam explanation family"
+    );
+    assert!(
+        section13.contains("p01 to p24"),
+        "the Round 13 section names the apportionment family"
+    );
+}
+
+#[test]
+fn the_failure_family_presents_the_inside_arm_calls_unchanged() {
+    let fixtures_dir = root().join("tests").join("fixtures").join("judgment");
+    let read = |name: &str| -> Value {
+        strict_parse(&std::fs::read_to_string(fixtures_dir.join(format!("{name}.json"))).unwrap())
+            .unwrap()
+    };
+    let mut presented = 0;
+    for number in 1..=24u32 {
+        let name = format!("j{number:02}");
+        if !fixtures_dir.join(format!("{name}.json")).exists() {
+            continue;
+        }
+        presented += 1;
+        let inside = format!("g{:02}", (number - 1) % 12 + 1);
+        let failure_doc = read(&name);
+        let inside_doc = read(&inside);
+        assert_eq!(
+            canonical(field(&failure_doc, "call")),
+            canonical(field(&inside_doc, "call")),
+            "failure case {name} presents a call other than the call of the inside arm case {inside} it re-presents"
+        );
+        assert_eq!(
+            canonical(field(&failure_doc, "policy")),
+            canonical(field(&inside_doc, "policy")),
+            "failure case {name} presents a policy other than the policy of the inside arm case {inside} it re-presents"
+        );
+    }
+    assert!(presented > 0, "the failure family stands empty");
+}
+
+#[test]
+fn the_failure_family_records_the_classes_the_manifest_states() {
+    let fixtures_dir = root().join("tests").join("fixtures").join("judgment");
+    let mut counts: Vec<(&str, usize)> = vec![
+        ("silence", 0),
+        ("malformed", 0),
+        ("abstention", 0),
+        ("none", 0),
+    ];
+    for number in 1..=24u32 {
+        let name = format!("j{number:02}");
+        let path = fixtures_dir.join(format!("{name}.json"));
+        if !path.exists() {
+            continue;
+        }
+        let fixture = strict_parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let policy = load_policy(field(&fixture, "policy")).unwrap();
+        let call = field(&fixture, "call");
+        let at = field(&fixture, "at").as_str().unwrap();
+        let reply = field(&fixture, "reply").as_str().unwrap();
+        let expected = field(&fixture, "expected");
+        let transport = StubTransport::replying(reply);
+        let decision = evaluate_with_transport(Some(&policy), None, call, at, Some(&transport));
+        assert_eq!(
+            canonical(&decision),
+            canonical(expected),
+            "the recomputed record differs in failure case {name}"
+        );
+        let failure = model_field(&decision, "failure");
+        let class = match failure.as_str() {
+            Some(text) => text.to_string(),
+            None => "none".to_string(),
+        };
+        let slot = counts
+            .iter_mut()
+            .find(|(label, _)| *label == class.as_str())
+            .unwrap_or_else(|| {
+                panic!("failure case {name} carries a class {class} the census does not name")
+            });
+        slot.1 += 1;
+    }
+    let manifest = std::fs::read_to_string(fixtures_dir.join("MANIFEST.md")).unwrap();
+    let section13 = manifest.split("## Round 13").nth(1).unwrap();
+    let census_line = section13
+        .lines()
+        .find(|line| line.contains("Failure class census:"))
+        .expect("the Round 13 section states the failure class census");
+    for (label, count) in &counts {
+        let stated: usize = census_line
+            .split(&format!("{label} "))
+            .nth(1)
+            .and_then(|rest| rest.split(|c: char| !c.is_ascii_digit()).next())
+            .and_then(|digits| digits.parse().ok())
+            .unwrap_or_else(|| panic!("the census line states no count for {label}"));
+        assert_eq!(
+            stated, *count,
+            "the MANIFEST states {stated} failure cases of class {label} against the recorded {count}"
+        );
+    }
+}
+
+#[test]
+fn the_apportionment_family_separates_its_kinds_by_path_form() {
+    let fixtures_dir = root().join("tests").join("fixtures").join("judgment");
+    let kind_of = |path: &str| -> &'static str {
+        let base = path.rsplit('/').next().unwrap_or(path);
+        if path.contains(".env") || base.starts_with("env") || base.contains("environment") {
+            "environment"
+        } else if ["key", "token", "secret", "credential", ".pem", "vault"]
+            .iter()
+            .any(|mark| path.contains(mark))
+        {
+            "key or credential store"
+        } else {
+            "unclassified"
+        }
+    };
+    let (mut environment, mut key_store) = (0usize, 0usize);
+    for number in 1..=24u32 {
+        let name = format!("p{number:02}");
+        let fixture = strict_parse(
+            &std::fs::read_to_string(fixtures_dir.join(format!("{name}.json"))).unwrap(),
+        )
+        .unwrap();
+        let path = field(&fixture, "call")
+            .get("path")
+            .unwrap()
+            .as_str()
+            .unwrap();
+        let kind = kind_of(path);
+        if number <= 12 {
+            assert_eq!(
+                kind, "environment",
+                "apportionment case {name} reads {path}, which stands outside the environment arm's kind"
+            );
+            environment += 1;
+        } else {
+            assert_eq!(
+                kind, "key or credential store",
+                "apportionment case {name} reads {path}, which stands outside the key arm's kind"
+            );
+            key_store += 1;
+        }
+    }
+    assert_eq!(environment, 12, "the environment arm stands at twelve");
+    assert_eq!(key_store, 12, "the key arm stands at twelve");
 }
 
 // --- the referral interior -----------------------------------------------------
