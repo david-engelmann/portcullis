@@ -1776,6 +1776,170 @@ fn the_induced_family_census_reads_the_named_count_lines() {
 }
 
 #[test]
+fn the_failed_consultation_crossing_recomputes_at_sixty_over_twelve() {
+    // The crossing pin of obligation PC-34, at its own seat
+    // beside the induced family pins. The family pins perform
+    // the family shape at family strength, the presentation
+    // pin asserting each induced case presents its inside arm
+    // call and policy unchanged, the classes pin asserting
+    // each induced case recomputes to its recorded record
+    // entire, and the census pin reading the family counts
+    // off the MANIFEST named lines. This pin performs the
+    // doctrine statement at doctrine strength, one measurement
+    // standing over two populations no family pin joins, the
+    // induced family grouped by class in the PC-16 order with
+    // its distinct calls counted by call identity against
+    // g01 to g12 and not by fixture count, and the control leg
+    // of the same window censused by verdict and by decision
+    // with case r12 deciding at the bar exactly. It asserts
+    // nothing about the evaluation leg of the window, which
+    // stands at printed strength behind no fixture.
+    let fixtures_dir = root().join("tests").join("fixtures").join("judgment");
+    let read = |name: &str| -> Value {
+        strict_parse(&std::fs::read_to_string(fixtures_dir.join(format!("{name}.json"))).unwrap())
+            .unwrap()
+    };
+    let classes = [
+        "silence",
+        "malformed",
+        "abstention",
+        "transport",
+        "no transport",
+    ];
+    let mut presentations = 0usize;
+    let mut allow_decisions = 0usize;
+    let mut deciding_denies = 0usize;
+    let mut call_keys: Vec<String> = Vec::new();
+    for (index, class) in classes.iter().enumerate() {
+        let mut grouped = 0usize;
+        for slot in 1..=12u32 {
+            let number = index as u32 * 12 + slot;
+            let name = format!("q{number:02}");
+            let fixture = read(&name);
+            let expected = field(&fixture, "expected");
+            grouped += 1;
+            presentations += 1;
+            call_keys.push(String::from_utf8(canonical(field(&fixture, "call"))).unwrap());
+            assert_eq!(
+                model_field(expected, "failure"),
+                &s(class),
+                "crossing presentation {name} records a failure class other than \
+                 the class its PC-16 group induces"
+            );
+            assert_eq!(
+                model_field(expected, "fallback"),
+                &s(class),
+                "crossing presentation {name} records a fallback other than \
+                 the class its PC-16 group induces"
+            );
+            assert_eq!(
+                field(expected, "decision"),
+                &s("escalate"),
+                "crossing presentation {name} records a decision other than \
+                 the fallback outcome of the policy it carries"
+            );
+            if field(expected, "decision") == &s("allow") {
+                allow_decisions += 1;
+            }
+            if model_field(expected, "verdict") == &s("deny")
+                && field(expected, "decision") == &s("deny")
+            {
+                deciding_denies += 1;
+            }
+        }
+        assert_eq!(
+            grouped, 12,
+            "the crossing group of class {class} holds {grouped} presentations \
+             against the stated twelve"
+        );
+    }
+    assert_eq!(
+        presentations, 60,
+        "the crossing holds {presentations} presentations against the stated sixty"
+    );
+    assert_eq!(
+        allow_decisions, 0,
+        "the crossing records {allow_decisions} allow decisions against the stated none"
+    );
+    assert_eq!(
+        deciding_denies, 0,
+        "the crossing records {deciding_denies} deciding deny verdicts \
+         against the stated none"
+    );
+    let mut distinct = call_keys.clone();
+    distinct.sort();
+    distinct.dedup();
+    assert_eq!(
+        distinct.len(),
+        12,
+        "the crossing stands over {} distinct calls against the stated twelve",
+        distinct.len()
+    );
+    let mut inside_keys: Vec<String> = (1..=12u32)
+        .map(|number| {
+            let fixture = read(&format!("g{number:02}"));
+            String::from_utf8(canonical(field(&fixture, "call"))).unwrap()
+        })
+        .collect();
+    inside_keys.sort();
+    inside_keys.dedup();
+    assert_eq!(
+        distinct, inside_keys,
+        "the crossing's distinct calls stand other than the seam inside arm calls g01 to g12"
+    );
+    let mut verdicts: Vec<&str> = Vec::new();
+    let mut decisions: Vec<&str> = Vec::new();
+    for number in 1..=12u32 {
+        let fixture = read(&format!("r{number:02}"));
+        let expected = field(&fixture, "expected");
+        verdicts.push(model_field(expected, "verdict").as_str().unwrap());
+        decisions.push(field(expected, "decision").as_str().unwrap());
+    }
+    let count = |values: &[&str], label: &str| values.iter().filter(|v| **v == label).count();
+    assert_eq!(
+        count(&verdicts, "deny"),
+        10,
+        "the control leg drew {} deny verdicts against the stated ten",
+        count(&verdicts, "deny")
+    );
+    assert_eq!(
+        count(&verdicts, "escalate"),
+        2,
+        "the control leg drew {} escalate verdicts against the stated two",
+        count(&verdicts, "escalate")
+    );
+    assert_eq!(
+        count(&decisions, "deny"),
+        7,
+        "the control leg drew {} deny decisions against the stated seven",
+        count(&decisions, "deny")
+    );
+    assert_eq!(
+        count(&decisions, "escalate"),
+        5,
+        "the control leg drew {} escalate decisions against the stated five",
+        count(&decisions, "escalate")
+    );
+    let r12 = read("r12");
+    let r12_expected = field(&r12, "expected");
+    assert_eq!(
+        model_field(r12_expected, "verdict"),
+        &s("deny"),
+        "case r12 records a verdict other than deny"
+    );
+    assert_eq!(
+        model_field(r12_expected, "confidence"),
+        &Value::Float(0.75),
+        "case r12 records a confidence other than exactly 0.75"
+    );
+    assert_eq!(
+        field(r12_expected, "decision"),
+        &s("deny"),
+        "case r12 records a decision other than deny"
+    );
+}
+
+#[test]
 fn the_recorded_replies_recompute_the_expected_model_blocks() {
     // The reply strength population pin, discharging residual
     // R17 at its named seat. Every recorded case in the corpus
