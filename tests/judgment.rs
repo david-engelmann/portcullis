@@ -1638,7 +1638,6 @@ fn the_gathered_families_stand_at_their_designed_population_shape() {
     );
 }
 
-
 #[test]
 fn the_induced_family_presents_the_inside_arm_calls_unchanged() {
     let fixtures_dir = root().join("tests").join("fixtures").join("judgment");
@@ -1676,7 +1675,13 @@ fn the_induced_family_records_the_classes_it_induces() {
     // and no transport at all for the no transport class. No
     // presentation is stepped over by an existence check.
     let fixtures_dir = root().join("tests").join("fixtures").join("judgment");
-    let classes = ["silence", "malformed", "abstention", "transport", "no transport"];
+    let classes = [
+        "silence",
+        "malformed",
+        "abstention",
+        "transport",
+        "no transport",
+    ];
     for number in 1..=60u32 {
         let name = format!("q{number:02}");
         let induced = classes[((number - 1) / 12) as usize];
@@ -1727,14 +1732,22 @@ fn the_induced_family_census_reads_the_named_count_lines() {
         let line = section18
             .lines()
             .find(|line| line.contains(label))
-            .unwrap_or_else(|| panic!("the Round 18 section carries no named count line for {label}"));
+            .unwrap_or_else(|| {
+                panic!("the Round 18 section carries no named count line for {label}")
+            });
         line.trim_end_matches('.')
             .rsplit(' ')
             .next()
             .and_then(|digits| digits.parse::<usize>().ok())
             .unwrap_or_else(|| panic!("the named count line for {label} carries no number"))
     };
-    let classes = ["silence", "malformed", "abstention", "transport", "no transport"];
+    let classes = [
+        "silence",
+        "malformed",
+        "abstention",
+        "transport",
+        "no transport",
+    ];
     let mut family = 0usize;
     for class in classes {
         let mut count = 0usize;
@@ -1782,12 +1795,14 @@ fn the_recorded_replies_recompute_the_expected_model_blocks() {
         .filter(|name| name.ends_with(".json"))
         .collect();
     names.sort();
-    assert_eq!(names.len(), 258, "the corpus stands at its designed population");
+    assert_eq!(
+        names.len(),
+        258,
+        "the corpus stands at its designed population"
+    );
     for name in &names {
-        let fixture = strict_parse(
-            &std::fs::read_to_string(fixtures_dir.join(name)).unwrap(),
-        )
-        .unwrap();
+        let fixture =
+            strict_parse(&std::fs::read_to_string(fixtures_dir.join(name)).unwrap()).unwrap();
         let expected = field(&fixture, "expected");
         let model = field(expected, "model");
         let assert_failure = |class: &str| {
@@ -1928,12 +1943,14 @@ fn the_recorded_policies_carry_the_threshold_and_escalation_the_doctrine_states(
         .filter(|name| name.ends_with(".json"))
         .collect();
     names.sort();
-    assert_eq!(names.len(), 258, "the corpus stands at its designed population");
+    assert_eq!(
+        names.len(),
+        258,
+        "the corpus stands at its designed population"
+    );
     for name in &names {
-        let fixture = strict_parse(
-            &std::fs::read_to_string(fixtures_dir.join(name)).unwrap(),
-        )
-        .unwrap();
+        let fixture =
+            strict_parse(&std::fs::read_to_string(fixtures_dir.join(name)).unwrap()).unwrap();
         let judgment = field(field(&fixture, "policy"), "judgment");
         let threshold = match judgment.get("threshold").unwrap() {
             Value::Float(number) => *number,
