@@ -122,3 +122,5 @@ manifest MANIFEST.md b95978d275f70d20bb5e1cd234b63150cd4498702fb6ddb83eb52881b0e
 exhibit EXHIBIT.md c3d5ea0ae9ab34377662b6a46cdb205ae7976edb472d65faa36b7493493b5cb1
 
 The suite replay leg stands as the proof's second leg. The recorded fixtures replaying byte for byte through the library proves the final bytes stand internally consistent, while byte identity with the pre-window bytes rests on the digest leg alone.
+
+The proof stands. After the window and the evaluation, the digest listing above was recomputed over the same 114 names on the final tree of the round. Every fixture digest stands identical, and the EXHIBIT digest stands identical. The judgment MANIFEST's digest differs from the pre-window digest the listing states, and it differs only by the added Round 13 section, because removing that section leaves a text standing byte for byte as the pre-window text whose digest the listing states. The suite's replay pin over the whole folder proves the final bytes stand internally consistent, and byte identity with the pre-window bytes rests on the digest leg alone, as the opening of this record states.
