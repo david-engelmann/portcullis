@@ -2172,7 +2172,6 @@ fn doctrine_cases() -> Vec<DoctrineCase> {
             let text = std::fs::read_to_string(fixtures_dir.join(format!("{name}.json"))).unwrap();
             let fixture = strict_parse(&text).unwrap();
             let expected = field(&fixture, "expected");
-            let model = field(expected, "model");
             let verdict = model_field(expected, "verdict").as_str().unwrap();
             let probabilities = model_field(expected, "probabilities");
             let confidence = match probabilities.get(verdict) {
