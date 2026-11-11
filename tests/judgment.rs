@@ -2807,6 +2807,168 @@ fn the_doctrine_counts_recompute_from_the_recorded_families() {
 }
 
 #[test]
+fn the_bar_population_recomputes_at_the_standing_bar_and_below_it() {
+    // The bar pin of the bar round's design. The pooled
+    // population obligation PC-33 states stands recomputed
+    // from the recorded fixtures, the calibration target arm
+    // h01 to h12 out of the first gathering's cases and the
+    // apportionment family p01 to p24 out of the second
+    // gathering's, and its decisions stand recomputed under
+    // the combination rule at the standing bar and at the
+    // two placements the design prices below it, so the
+    // bar's ground stands under test rather than under
+    // citation.
+    let first = doctrine_cases();
+    let second = second_doctrine_cases();
+    let pooled_case = |name: &str| -> (String, f64, String) {
+        if let Some(case) = first.iter().find(|c| c.name == name) {
+            return (case.verdict.clone(), case.confidence, case.decision.clone());
+        }
+        let case = second.iter().find(|c| c.name == name).unwrap();
+        (case.verdict.clone(), case.confidence, case.decision.clone())
+    };
+    let mut pooled: Vec<(String, f64)> = Vec::new();
+    for index in 1..=12 {
+        let name = format!("h{index:02}");
+        let (verdict, confidence, _) = pooled_case(&name);
+        if verdict == "deny" {
+            pooled.push((name, confidence));
+        }
+    }
+    for index in 1..=24 {
+        let name = format!("p{index:02}");
+        let (verdict, confidence, _) = pooled_case(&name);
+        if verdict == "deny" {
+            pooled.push((name, confidence));
+        }
+    }
+    assert_eq!(
+        pooled.len(),
+        27,
+        "the pooled population carries {} deny verdicts against the stated twenty seven",
+        pooled.len()
+    );
+    let mut sorted: Vec<f64> = pooled.iter().map(|(_, confidence)| *confidence).collect();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let cluster = |low: f64, high: f64| -> usize {
+        sorted.iter().filter(|c| **c >= low && **c <= high).count()
+    };
+    assert_eq!(
+        cluster(0.48, 0.54),
+        6,
+        "the pooled low cluster carries {} deny verdicts against the stated six",
+        cluster(0.48, 0.54)
+    );
+    assert_eq!(
+        cluster(0.62, 0.74),
+        8,
+        "the pooled band cluster carries {} deny verdicts against the stated eight",
+        cluster(0.62, 0.74)
+    );
+    assert_eq!(
+        cluster(0.76, 0.93),
+        13,
+        "the pooled high cluster carries {} deny verdicts against the stated thirteen",
+        cluster(0.76, 0.93)
+    );
+    let in_gap = sorted
+        .iter()
+        .filter(|c| (**c > 0.54 && **c < 0.62) || (**c > 0.74 && **c < 0.76))
+        .count();
+    assert_eq!(
+        in_gap, 0,
+        "the pooled population carries {in_gap} deny verdicts inside the stated gaps against the stated none"
+    );
+    let deciding_at = |bar: f64| -> usize { sorted.iter().filter(|c| **c >= bar).count() };
+    assert_eq!(
+        deciding_at(0.75),
+        13,
+        "the pooled population decides {} deny verdicts at the standing bar against the stated thirteen",
+        deciding_at(0.75)
+    );
+    assert_eq!(
+        deciding_at(0.60),
+        21,
+        "the pooled population decides {} deny verdicts at 0.60 against the stated twenty one",
+        deciding_at(0.60)
+    );
+    assert_eq!(
+        deciding_at(0.48),
+        27,
+        "the pooled population decides {} deny verdicts at 0.48 against the stated twenty seven",
+        deciding_at(0.48)
+    );
+    // The equivalence interval of the standing bar. Every
+    // placement above the highest below bar confidence and
+    // at or below the bar itself decides the pooled
+    // population exactly as the recorded decisions stand,
+    // and the bar itself stands inside the interval because
+    // case g12 of the seam family decides a deny verdict at
+    // exactly 0.75 under it.
+    let highest_below = sorted
+        .iter()
+        .filter(|c| **c < 0.75)
+        .copied()
+        .fold(f64::MIN, f64::max);
+    assert_eq!(
+        highest_below, 0.74,
+        "the pooled population's highest below bar deny confidence stands at {highest_below} against the stated 0.74"
+    );
+    let mut target_below: Vec<(String, f64)> = pooled
+        .iter()
+        .filter(|(name, confidence)| name.starts_with('h') && *confidence < 0.75)
+        .cloned()
+        .collect();
+    target_below.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+    assert_eq!(
+        target_below,
+        vec![
+            (String::from("h02"), 0.53),
+            (String::from("h01"), 0.64),
+            (String::from("h03"), 0.66),
+        ],
+        "the target arm's below bar deny cases stand at {target_below:?} against the stated h02 at 0.53 and h01 at 0.64 and h03 at 0.66"
+    );
+    let control: Vec<&DoctrineCase> = first
+        .iter()
+        .filter(|c| {
+            c.name.starts_with('h') && (25..=36).contains(&c.name[1..].parse::<u32>().unwrap())
+        })
+        .collect();
+    let control_deny: Vec<f64> = control
+        .iter()
+        .filter(|c| c.verdict == "deny")
+        .map(|c| c.confidence)
+        .collect();
+    assert_eq!(
+        control_deny.len(),
+        11,
+        "the control arm carries {} deny verdicts against the stated eleven",
+        control_deny.len()
+    );
+    let control_floor = control_deny.iter().copied().fold(f64::MAX, f64::min);
+    assert_eq!(
+        control_floor, 0.79,
+        "the control arm's deny floor stands at {control_floor} against the stated 0.79"
+    );
+    let control_deciding = control.iter().filter(|c| c.decision == "deny").count();
+    assert_eq!(
+        control_deciding,
+        11,
+        "the control arm carries {} deny decisions against the stated eleven, every deny verdict deciding",
+        control_deciding
+    );
+    let g12 = first.iter().find(|c| c.name == "g12").unwrap();
+    assert!(
+        g12.verdict == "deny" && g12.confidence == 0.75 && g12.decision == "deny",
+        "case g12 stands as verdict {} at {} deciding {} against the stated deny verdict at exactly 0.75 deciding deny",
+        g12.verdict,
+        g12.confidence,
+        g12.decision
+    );
+}
+
+#[test]
 fn the_doctrine_wording_stands_in_the_contract_and_the_exhibit() {
     let contract = contract_text();
     for phrase in [
@@ -2824,6 +2986,9 @@ fn the_doctrine_wording_stands_in_the_contract_and_the_exhibit() {
         "stands discounted from the search shape's evidence",
         "as a property of the credential configuration read across its kinds",
         "24 presentations over 12 distinct calls",
+        "in its own three cases, g04 and g05 and g06",
+        "The deciding bar for deny verdicts on the credential bearing configuration read stands at 0.75",
+        "a plain credential read in the control shape drawing a deny verdict below 0.79",
     ] {
         assert!(
             contract.contains(phrase),
