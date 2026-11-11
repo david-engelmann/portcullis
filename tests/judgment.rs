@@ -2288,13 +2288,19 @@ fn the_doctrine_counts_recompute_from_the_recorded_families() {
         "the unexplained distance decided deny in {} of its four cases",
         distance_decisions(2, "deny")
     );
+    // The gradient limb stands restated under the Round 12
+    // repair, a recorded correction. The naming distance's
+    // recorded confidence is the probability of its allow
+    // verdict, so it stands in no comparison with the deny
+    // confidences of the other two distances, and the limb
+    // asserts the deny side gradient alone, beside the
+    // verdict pattern asserted above.
     for base in [13usize, 16, 19, 22] {
-        let naming = purpose_case(base, 0).confidence;
         let covering = purpose_case(base, 1).confidence;
         let unexplained = purpose_case(base, 2).confidence;
         assert!(
-            naming < covering && covering < unexplained,
-            "the purpose gradient fails on the target at h{base:02}: {naming} {covering} {unexplained}"
+            covering < unexplained,
+            "the purpose gradient fails on the target at h{base:02}: {covering} {unexplained}"
         );
     }
     let mut calls: Vec<&str> = cases.iter().map(|c| c.call_key.as_str()).collect();
@@ -2317,7 +2323,7 @@ fn the_doctrine_wording_stands_in_the_contract_and_the_exhibit() {
         "three of the four outside deny verdicts",
         "anchors the measure",
         "configuration form alone settles nothing",
-        "at each greater purpose distance",
+        "the confidence stands higher at the unexplained distance",
         "sixty distinct cases over forty eight distinct calls",
         "at printed strength",
         "stand on one footing",
