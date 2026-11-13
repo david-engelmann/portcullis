@@ -203,7 +203,7 @@ The contract lives in CONTRACT.md. Obligations S1 to S5 stand as the setup recor
 
 The continuous integration workflow runs the full suite and the Python binding smoke on every push and pull request, and both checks are required on main.
 
-Closed perfection rounds are 41 of 100. A round counts only when a full cycle of work and audit and review and red team and approval has closed, and seeding and setup are not rounds.
+Closed perfection rounds are 42 of 100. A round counts only when a full cycle of work and audit and review and red team and approval has closed, and seeding and setup are not rounds.
 
 The remote seed was verified on 2026-11-02 against the staged seed, and its commit is 46b1cafe58e78f9b0820b81800b6727cc2ffae60, a parentless commit holding exactly README.md and LICENSE and .gitignore.
 
