@@ -2428,3 +2428,121 @@ fn a_call_file_nested_past_the_depth_bound_is_a_caller_error() {
         result.stderr
     );
 }
+
+#[test]
+fn an_option_prefix_in_value_position_names_the_option_that_lacks_its_value() {
+    let dir = temp_dir("option-prefix-value");
+    let call_path = write_json(&dir.join("call.json"), &shell_call(&["ls"]));
+    let log_path = dir.join("audit.jsonl");
+    let result = run_cli(
+        &[
+            "check",
+            "--policy",
+            "--pol",
+            "--log",
+            log_path.to_str().unwrap(),
+            call_path.to_str().unwrap(),
+        ],
+        None,
+    );
+    assert_eq!(result.status, 2);
+    assert_eq!(result.stdout, "");
+    assert!(
+        result
+            .stderr
+            .contains("portcullis: error: argument --policy: expected one argument"),
+        "{}",
+        result.stderr
+    );
+    assert!(!log_path.exists());
+}
+
+#[test]
+fn an_unknown_option_name_in_value_position_names_the_option_that_lacks_its_value() {
+    let dir = temp_dir("option-unknown-value");
+    let call_path = write_json(&dir.join("call.json"), &shell_call(&["ls"]));
+    let log_path = dir.join("audit.jsonl");
+    let result = run_cli(
+        &[
+            "check",
+            "--policy",
+            "--bogus",
+            "--log",
+            log_path.to_str().unwrap(),
+            call_path.to_str().unwrap(),
+        ],
+        None,
+    );
+    assert_eq!(result.status, 2);
+    assert_eq!(result.stdout, "");
+    assert!(
+        result
+            .stderr
+            .contains("portcullis: error: argument --policy: expected one argument"),
+        "{}",
+        result.stderr
+    );
+    assert!(!log_path.exists());
+}
+
+#[test]
+fn a_short_option_form_in_value_position_names_the_option_that_lacks_its_value() {
+    let dir = temp_dir("option-short-value");
+    let call_path = write_json(&dir.join("call.json"), &shell_call(&["ls"]));
+    let log_path = dir.join("audit.jsonl");
+    let result = run_cli(
+        &[
+            "check",
+            "--policy",
+            "-x",
+            "--log",
+            log_path.to_str().unwrap(),
+            call_path.to_str().unwrap(),
+        ],
+        None,
+    );
+    assert_eq!(result.status, 2);
+    assert_eq!(result.stdout, "");
+    assert!(
+        result
+            .stderr
+            .contains("portcullis: error: argument --policy: expected one argument"),
+        "{}",
+        result.stderr
+    );
+    assert!(!log_path.exists());
+}
+
+#[test]
+fn a_negative_number_shape_and_the_bare_hyphen_stand_as_option_values() {
+    // The Python parser accepts a negative number's shape as an
+    // option value because no option of this command line looks
+    // like a negative number, and the bare hyphen names a path by
+    // the standing convention, so both still reach the policy
+    // load and draw its policy error decision at exit one. A
+    // repair that refused every hyphen led token in value
+    // position would answer both shapes at exit two instead.
+    let dir = temp_dir("option-number-value");
+    let call_path = write_json(&dir.join("call.json"), &shell_call(&["ls"]));
+    for (tag, value) in [("negative", "-1"), ("hyphen", "-")] {
+        let log_path = dir.join(format!("audit-{tag}.jsonl"));
+        let result = run_cli(
+            &[
+                "check",
+                "--policy",
+                value,
+                "--log",
+                log_path.to_str().unwrap(),
+                call_path.to_str().unwrap(),
+            ],
+            None,
+        );
+        assert_eq!(result.status, 1, "{value}");
+        assert!(
+            result.stdout.contains("\"decision\":\"deny\""),
+            "{value}: {}",
+            result.stdout
+        );
+        assert!(log_path.exists(), "{value}");
+    }
+}

@@ -349,6 +349,27 @@ fn match_long_option<'a>(
     }
 }
 
+/// Tell whether a token standing where an option value is
+/// expected reads as an option rather than as a value, as the
+/// Python parser judges it. The separator reads as an option,
+/// and so does every hyphen led token but two: the bare hyphen,
+/// which names a path by the standing convention, and a
+/// negative number's shape, a hyphen with an optional decimal
+/// point and a digit, which the Python parser accepts as a
+/// value because no option of this command line looks like a
+/// negative number.
+fn reads_as_option(text: &str) -> bool {
+    if text == "--" {
+        return true;
+    }
+    if !text.starts_with('-') || text == "-" {
+        return false;
+    }
+    let after_hyphen = &text[1..];
+    let digits = after_hyphen.strip_prefix('.').unwrap_or(after_hyphen);
+    !digits.starts_with(|c: char| c.is_ascii_digit())
+}
+
 fn parse_subcommand(command: &str, args: &[OsString]) -> Result<ParsedArgs, (String, i32)> {
     let usage = match command {
         "check" => CHECK_USAGE,
@@ -398,7 +419,7 @@ fn parse_subcommand(command: &str, args: &[OsString]) -> Result<ParsedArgs, (Str
                     match args.get(index) {
                         Some(value) => {
                             let value_text = value.to_string_lossy();
-                            if value_text == "--" || known.contains(&value_text.as_ref()) {
+                            if reads_as_option(value_text.as_ref()) {
                                 return Err((
                                     format!("argument {option}: expected one argument"),
                                     2,
