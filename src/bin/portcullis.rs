@@ -349,12 +349,19 @@ fn match_long_option<'a>(
     }
 }
 
-fn parse_subcommand(command: &str, args: &[OsString]) -> Result<ParsedArgs, (String, i32)> {
-    let usage = match command {
+/// The usage text of one subcommand, the text its argument
+/// errors print. The parser and the top level error path
+/// select it through this one match.
+fn usage_of(command: &str) -> &'static str {
+    match command {
         "check" => CHECK_USAGE,
         "audit" => AUDIT_USAGE,
         _ => LOG_USAGE,
-    };
+    }
+}
+
+fn parse_subcommand(command: &str, args: &[OsString]) -> Result<ParsedArgs, (String, i32)> {
+    let usage = usage_of(command);
     let known: &[&str] = match command {
         "check" => &["--policy", "--log", "--judge", "--help"],
         "audit" => &["--log", "--sample", "--help"],
@@ -501,11 +508,7 @@ fn run() -> i32 {
                 if detail.is_empty() {
                     code
                 } else {
-                    let usage = match first.as_str() {
-                        "check" => CHECK_USAGE,
-                        "audit" => AUDIT_USAGE,
-                        _ => LOG_USAGE,
-                    };
+                    let usage = usage_of(first.as_str());
                     arg_error(usage, &detail)
                 }
             }
