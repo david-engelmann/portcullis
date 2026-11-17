@@ -1203,8 +1203,13 @@ fn validate_arg_conditions(value: &Value, what: &str) -> Result<Vec<ArgCondition
             )));
         }
         let index = entry.get("index").unwrap();
+        if !index.is_int() {
+            return Err(PolicyError(format!(
+                "{what} carries an argument condition whose index is not an integer"
+            )));
+        }
         let index_value = index.int_usize_saturated();
-        if !index.is_int() || index_value == Some(0) {
+        if index_value == Some(0) {
             return Err(PolicyError(format!(
                 "{what} names an argument position below 1"
             )));

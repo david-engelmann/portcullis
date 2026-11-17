@@ -414,7 +414,7 @@ def test_a_boolean_argument_index_is_no_index_at_all(tmp_path):
     )
     assert decision["decision"] == "deny"
     assert decision["source"] == {
-        "detail": "the match of rule indexed names an argument position below 1",
+        "detail": "the match of rule indexed carries an argument condition whose index is not an integer",
         "type": "policy error",
     }
 
