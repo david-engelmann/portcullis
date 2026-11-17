@@ -349,6 +349,40 @@ fn match_long_option<'a>(
     }
 }
 
+/// Tell whether a token standing where an option value is
+/// expected reads as an option rather than as a value, as the
+/// Python parser judges it. The separator reads as an option,
+/// and so does every hyphen led token but three: the bare
+/// hyphen, which names a path by the standing convention; a
+/// token carrying a space, which the Python parser never reads
+/// as an option; and a negative number's complete shape in
+/// ASCII digits, which the Python parser accepts as a value
+/// because no option of this command line looks like a
+/// negative number.
+fn reads_as_option(text: &str) -> bool {
+    if text == "--" {
+        return true;
+    }
+    if !text.starts_with('-') || text == "-" || text.contains(' ') {
+        return false;
+    }
+    !is_negative_number(text)
+}
+
+/// Tell whether a hyphen led token is a negative number's
+/// complete shape: digits with an optional fractional part,
+/// or a decimal point and then digits, in ASCII digits.
+fn is_negative_number(text: &str) -> bool {
+    let rest = &text[1..];
+    let mut parts = rest.splitn(2, '.');
+    let whole = parts.next().unwrap_or("");
+    let digits = |part: &str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit());
+    match parts.next() {
+        None => digits(whole),
+        Some(fraction) => digits(fraction) && (whole.is_empty() || digits(whole)),
+    }
+}
+
 fn parse_subcommand(command: &str, args: &[OsString]) -> Result<ParsedArgs, (String, i32)> {
     let usage = match command {
         "check" => CHECK_USAGE,
@@ -398,7 +432,7 @@ fn parse_subcommand(command: &str, args: &[OsString]) -> Result<ParsedArgs, (Str
                     match args.get(index) {
                         Some(value) => {
                             let value_text = value.to_string_lossy();
-                            if value_text == "--" || known.contains(&value_text.as_ref()) {
+                            if reads_as_option(value_text.as_ref()) {
                                 return Err((
                                     format!("argument {option}: expected one argument"),
                                     2,
