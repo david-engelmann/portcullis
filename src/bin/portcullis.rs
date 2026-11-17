@@ -383,6 +383,24 @@ fn is_negative_number(text: &str) -> bool {
     }
 }
 
+/// Tell whether a hyphen led token standing in option
+/// position is read as a positional by the Python parser.
+/// An option string there carries no space before any
+/// equals sign, the equals form taking its inline value
+/// whole, and a negative number's complete shape is a
+/// positional because no option of this command line looks
+/// like a negative number.
+fn reads_as_positional(text: &str) -> bool {
+    if is_negative_number(text) {
+        return true;
+    }
+    let head = match text.find('=') {
+        Some(at) => &text[..at],
+        None => text,
+    };
+    head.contains(' ')
+}
+
 fn parse_subcommand(command: &str, args: &[OsString]) -> Result<ParsedArgs, (String, i32)> {
     let usage = match command {
         "check" => CHECK_USAGE,
@@ -415,7 +433,7 @@ fn parse_subcommand(command: &str, args: &[OsString]) -> Result<ParsedArgs, (Str
             print_help(command, usage);
             return Err((String::new(), 0));
         }
-        if !positional_only && token_text.starts_with("--") {
+        if !positional_only && token_text.starts_with("--") && !reads_as_positional(&token_text) {
             let (name_token, inline) = split_inline(token);
             let option = match match_long_option(&name_token, &token_text, known) {
                 Ok(option) => option,
@@ -473,7 +491,11 @@ fn parse_subcommand(command: &str, args: &[OsString]) -> Result<ParsedArgs, (Str
             index += 1;
             continue;
         }
-        if !positional_only && token_text.starts_with('-') && token_text != "-" {
+        if !positional_only
+            && token_text.starts_with('-')
+            && token_text != "-"
+            && !reads_as_positional(&token_text)
+        {
             return Err((format!("unrecognized arguments: {token_text}"), 2));
         }
         if command == "check" && parsed.call.is_none() {
