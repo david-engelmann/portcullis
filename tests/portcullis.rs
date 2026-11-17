@@ -968,6 +968,33 @@ malformed_case!(
     ])
 );
 malformed_case!(
+    malformed_call_shapes_network_with_a_plus_signed_port_in_the_url,
+    Value::obj(vec![
+        ("format", s("portcullis-call/1")),
+        ("kind", s("network")),
+        ("method", s("GET")),
+        ("url", s("http://h.test:+80/")),
+    ])
+);
+malformed_case!(
+    malformed_call_shapes_network_with_junk_after_a_bracketed_host,
+    Value::obj(vec![
+        ("format", s("portcullis-call/1")),
+        ("kind", s("network")),
+        ("method", s("GET")),
+        ("url", s("http://[::1]x/")),
+    ])
+);
+malformed_case!(
+    malformed_call_shapes_network_with_junk_and_a_port_after_a_bracketed_host,
+    Value::obj(vec![
+        ("format", s("portcullis-call/1")),
+        ("kind", s("network")),
+        ("method", s("GET")),
+        ("url", s("http://[::1]x:80/")),
+    ])
+);
+malformed_case!(
     malformed_call_shapes_network_with_an_unknown_scheme,
     Value::obj(vec![
         ("format", s("portcullis-call/1")),
