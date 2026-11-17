@@ -1864,9 +1864,11 @@ fn rule_matches(rule: &Rule, call: &Value) -> bool {
             }
             if let Some(path) = &match_.path {
                 let given = text_field(call, "path");
-                let normalized = normpath(given);
-                if !match_text(path, given) && !match_text(path, &normalized) {
-                    return false;
+                if !match_text(path, given) {
+                    let normalized = normpath(given);
+                    if !match_text(path, &normalized) {
+                        return false;
+                    }
                 }
             }
             true

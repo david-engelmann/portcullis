@@ -2758,3 +2758,54 @@ fn an_equals_form_with_a_space_in_its_value_stands_as_the_option() {
     );
     assert!(log_path.exists());
 }
+
+#[test]
+fn a_file_rule_matching_only_the_normalized_path_still_allows() {
+    // The given path carries a dot segment, so its raw form
+    // does not match the rule's glob and only its normalized
+    // form does. The normalized test stands behind the raw
+    // test, deferred by PC-A51 and never dropped: a repair
+    // that drops it answers the default here instead of the
+    // rule, and a repair that skips it on a raw miss does the
+    // same.
+    let rules = vec![plain_rule(
+        "allow-data",
+        "file",
+        "allow",
+        Value::obj(vec![
+            ("operation", matcher("exact", "read")),
+            ("path", matcher("glob", "/srv/data/*")),
+        ]),
+    )];
+    let decision = decide(&file_call("read", "/srv/./data/file.txt"), rules, "deny");
+    assert_eq!(field(&decision, "decision"), &s("allow"));
+    assert_eq!(
+        field(&decision, "source"),
+        &Value::obj(vec![("type", s("rule")), ("rule", s("allow-data"))])
+    );
+}
+
+#[test]
+fn a_file_rule_matching_the_given_path_with_its_dot_segment_still_allows() {
+    // The exact pattern is the given path itself, dot segment
+    // standing, so the raw test decides the match and the
+    // normalized form, a different string, is never the form
+    // that can decide it. A repair that tests the normalized
+    // form instead of the raw form, rather than after it,
+    // answers the default here instead of the rule.
+    let rules = vec![plain_rule(
+        "allow-dotted",
+        "file",
+        "allow",
+        Value::obj(vec![
+            ("operation", matcher("exact", "read")),
+            ("path", matcher("exact", "/srv/./data/file.txt")),
+        ]),
+    )];
+    let decision = decide(&file_call("read", "/srv/./data/file.txt"), rules, "deny");
+    assert_eq!(field(&decision, "decision"), &s("allow"));
+    assert_eq!(
+        field(&decision, "source"),
+        &Value::obj(vec![("type", s("rule")), ("rule", s("allow-dotted"))])
+    );
+}
