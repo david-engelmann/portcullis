@@ -693,6 +693,13 @@ fn is_text(value: &Value) -> bool {
 
 // --- call validation -------------------------------------------------------
 
+fn argv_form_ok(argv: &Value) -> bool {
+    match argv.as_array() {
+        Some(items) => !items.is_empty() && items.iter().all(is_text),
+        None => false,
+    }
+}
+
 fn validate_shell(document: &Value) -> Result<Value, MalformedCall> {
     check_keys(
         document,
@@ -702,11 +709,7 @@ fn validate_shell(document: &Value) -> Result<Value, MalformedCall> {
     )
     .map_err(MalformedCall)?;
     let argv = document.get("argv").unwrap();
-    let argv_ok = match argv.as_array() {
-        Some(items) => !items.is_empty() && items.iter().all(is_text),
-        None => false,
-    };
-    if !argv_ok {
+    if !argv_form_ok(argv) {
         return Err(MalformedCall(
             "a shell call carries an argv of one or more strings".to_string(),
         ));
@@ -1297,11 +1300,7 @@ fn validate_substitute(
         "shell" => {
             check_policy_keys(substitute, &["argv", "cwd"], &what)?;
             if let Some(argv) = substitute.get("argv") {
-                let argv_ok = match argv.as_array() {
-                    Some(items) => !items.is_empty() && items.iter().all(is_text),
-                    None => false,
-                };
-                if !argv_ok {
+                if !argv_form_ok(argv) {
                     return Err(PolicyError(format!("{what} carries an argv of no use")));
                 }
                 result.argv = Some(argv.clone());
@@ -2083,7 +2082,15 @@ fn evaluate_inner(
                 None => continue,
             }
         }
-        let rewritten = apply_substitute(&call, rule.substitute.as_ref().unwrap(), kind);
+        let substitute = match &rule.substitute {
+            Some(substitute) => substitute,
+            // load_policy refuses a rewrite rule with no
+            // substitute, so this arm only stands for a policy
+            // object a caller built by hand, and there the rule
+            // simply never fires.
+            None => continue,
+        };
+        let rewritten = apply_substitute(&call, substitute, kind);
         let rewritten = match validate_call(&rewritten) {
             Ok(rewritten) => rewritten,
             Err(_) => {
