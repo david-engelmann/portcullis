@@ -251,6 +251,20 @@ fn key_text(key: &Bound<'_, PyAny>) -> Result<String, ConvertError> {
     }
 }
 
+/// The items of one Python sequence, a list or a tuple, as
+/// one document array, each item converted at the depth
+/// below the sequence itself.
+fn sequence_value<'py, I>(items: I, len: usize, depth: usize) -> Result<Value, ConvertError>
+where
+    I: Iterator<Item = Bound<'py, PyAny>>,
+{
+    let mut converted = Vec::with_capacity(len);
+    for item in items {
+        converted.push(to_value(&item, depth + 1)?);
+    }
+    Ok(Value::Array(converted))
+}
+
 /// One Python value as a document in the library's model.
 ///
 /// The depth bound mirrors the reader's, and it is also what
@@ -290,18 +304,10 @@ fn to_value(value: &Bound<'_, PyAny>, depth: usize) -> Result<Value, ConvertErro
         };
     }
     if let Ok(list) = value.cast::<PyList>() {
-        let mut items = Vec::with_capacity(list.len());
-        for item in list.iter() {
-            items.push(to_value(&item, depth + 1)?);
-        }
-        return Ok(Value::Array(items));
+        return sequence_value(list.iter(), list.len(), depth);
     }
     if let Ok(tuple) = value.cast::<PyTuple>() {
-        let mut items = Vec::with_capacity(tuple.len());
-        for item in tuple.iter() {
-            items.push(to_value(&item, depth + 1)?);
-        }
-        return Ok(Value::Array(items));
+        return sequence_value(tuple.iter(), tuple.len(), depth);
     }
     if let Ok(dict) = value.cast::<PyDict>() {
         let mut pairs = Vec::with_capacity(dict.len());
