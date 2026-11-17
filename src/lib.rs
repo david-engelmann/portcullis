@@ -879,10 +879,16 @@ fn parse_url(raw: &str) -> Result<ParsedUrl, ()> {
         .map(|host| host.to_lowercase());
     let port = match port_text {
         None => Ok(None),
-        Some(text) => match text.parse::<i64>() {
-            Ok(value) if (0..=65535).contains(&value) => Ok(Some(value)),
-            _ => Err(()),
-        },
+        Some(text) => {
+            if text.is_empty() || !text.bytes().all(|byte| byte.is_ascii_digit()) {
+                Err(())
+            } else {
+                match text.parse::<i64>() {
+                    Ok(value) if (0..=65535).contains(&value) => Ok(Some(value)),
+                    _ => Err(()),
+                }
+            }
+        }
     };
     Ok(ParsedUrl {
         scheme,
@@ -899,6 +905,9 @@ fn split_hostinfo(hostinfo: &str) -> Result<(Option<&str>, Option<&str>), ()> {
             Some(close) => {
                 let host = &after_open[..close];
                 let rest = &after_open[close + 1..];
+                if !rest.is_empty() && !rest.starts_with(':') {
+                    return Err(());
+                }
                 let port = rest.strip_prefix(':').filter(|text| !text.is_empty());
                 Ok((Some(host), port))
             }
