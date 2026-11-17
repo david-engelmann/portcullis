@@ -1470,9 +1470,7 @@ fn validate_judgment_block(block: &Value) -> Result<Judgment, PolicyError> {
         ));
     }
     let threshold = match block.get("threshold").unwrap() {
-        Value::Float(value) if value.is_finite() && *value > 0.0 && *value <= 1.0 => {
-            Some(*value)
-        }
+        Value::Float(value) if value.is_finite() && *value > 0.0 && *value <= 1.0 => Some(*value),
         Value::Int(text) => match text.parse::<i64>() {
             Ok(1) => Some(1.0),
             _ => None,
