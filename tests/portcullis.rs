@@ -5,12 +5,13 @@
 //! for a real reason. The fixtures are synthetic and written
 //! for this repo.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 #[allow(dead_code)]
 mod common;
-use common::{field, root, run_cli, run_cli_bytes, s, write_log_lines, CliOutput};
+use common::{field, root, run_cli, s, write_log_lines, CliOutput};
 
 use portcullis::{
     canonical, evaluate, load_policy, read_log, strict_parse, LogReadError, Policy, Value,

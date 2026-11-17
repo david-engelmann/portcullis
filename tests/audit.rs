@@ -21,7 +21,7 @@ use portcullis::{
 
 #[allow(dead_code)]
 mod common;
-use common::{field, root, run_cli, s, CliOutput, StubTransport};
+use common::{field, root, run_cli, s, StubTransport};
 
 const AT: &str = "2026-11-04T10:00:00+00:00";
 const BATTERY_AT: &str = "2026-11-02T10:00:00+00:00";

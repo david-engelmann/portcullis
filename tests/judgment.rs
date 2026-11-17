@@ -7,16 +7,16 @@
 //! Every test pins one claim of obligations PC-13 to PC-20 and
 //! can fail for a real reason.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use portcullis::{
     call_digest, canonical, evaluate, evaluate_with_transport, load_policy, read_log, strict_parse,
-    FixtureTransport, SubprocessTransport, Value,
+    FixtureTransport, JudgeTransport, SubprocessTransport, Value,
 };
 
 #[allow(dead_code)]
 mod common;
-use common::{field, root, run_cli, s, write_log_lines, CliOutput, StubTransport};
+use common::{field, root, run_cli, s, write_log_lines, StubTransport};
 
 const AT: &str = "2026-11-04T10:00:00+00:00";
 
