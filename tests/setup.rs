@@ -232,6 +232,24 @@ fn ci_gate_steps_stand_inside_the_test_job() {
     assert!(section.contains(&format!("run: {CLIPPY_COMMAND}")));
 }
 
+/// The lines of a workflow text that name the toolchain
+/// action without pinning it to a full commit SHA. Every line
+/// naming the action is examined, so a second job carrying the
+/// action cannot stand an unpinned line past the hygiene pin
+/// by standing after a pinned one.
+fn unpinned_toolchain_lines(text: &str) -> Vec<&str> {
+    text.lines()
+        .filter(|line| line.contains("dtolnay/rust-toolchain@"))
+        .filter(|line| {
+            let pin = line.split("dtolnay/rust-toolchain@").nth(1).unwrap().trim();
+            pin.len() != 40
+                || !pin
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        })
+        .collect()
+}
+
 #[test]
 fn ci_carries_the_fleet_credential_hygiene() {
     let text = read(".github/workflows/ci.yml");
@@ -260,19 +278,35 @@ fn ci_carries_the_fleet_credential_hygiene() {
     assert!(!text.contains("write-all"));
     assert!(!text.contains("contents: write"));
     assert!(!text.contains("rust-toolchain@master"));
-    let toolchain_line = text
-        .lines()
-        .find(|line| line.contains("dtolnay/rust-toolchain@"))
-        .expect("the workflow carries no toolchain step");
-    let pin = toolchain_line
-        .split("dtolnay/rust-toolchain@")
-        .nth(1)
-        .unwrap()
-        .trim();
-    assert_eq!(pin.len(), 40, "{}", toolchain_line);
-    assert!(pin
-        .bytes()
-        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)));
+    assert!(
+        text.lines()
+            .any(|line| line.contains("dtolnay/rust-toolchain@")),
+        "the workflow carries no toolchain step"
+    );
+    // Every line naming the toolchain action is examined, not
+    // the first alone, so the pin certifies the whole surface
+    // the workflow carries.
+    assert!(unpinned_toolchain_lines(&text).is_empty());
+}
+
+#[test]
+fn ci_credential_hygiene_catches_a_second_unpinned_toolchain_line() {
+    let ci_text = read(".github/workflows/ci.yml");
+    assert!(unpinned_toolchain_lines(&ci_text).is_empty());
+    // A further step naming the action by a moving name, planted
+    // after the pinned lines where a first-line-only reading
+    // never looked, is caught.
+    let planted = format!("{ci_text}      - uses: dtolnay/rust-toolchain@master\n");
+    assert_eq!(unpinned_toolchain_lines(&planted).len(), 1);
+    // The second job's own line carrying a moving name in place
+    // of the pin is caught the same way.
+    let second_unpinned = ci_text.replacen(
+        "python-version: \"3.12\"\n      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8",
+        "python-version: \"3.12\"\n      - uses: dtolnay/rust-toolchain@stable",
+        1,
+    );
+    assert_ne!(second_unpinned, ci_text);
+    assert_eq!(unpinned_toolchain_lines(&second_unpinned).len(), 1);
 }
 
 #[test]
