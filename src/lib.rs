@@ -2082,7 +2082,15 @@ fn evaluate_inner(
                 None => continue,
             }
         }
-        let rewritten = apply_substitute(&call, rule.substitute.as_ref().unwrap(), kind);
+        let substitute = match &rule.substitute {
+            Some(substitute) => substitute,
+            // load_policy refuses a rewrite rule with no
+            // substitute, so this arm only stands for a policy
+            // object a caller built by hand, and there the rule
+            // simply never fires.
+            None => continue,
+        };
+        let rewritten = apply_substitute(&call, substitute, kind);
         let rewritten = match validate_call(&rewritten) {
             Ok(rewritten) => rewritten,
             Err(_) => {

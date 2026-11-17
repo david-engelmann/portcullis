@@ -10,7 +10,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use portcullis::{
-    canonical, evaluate, load_policy, read_log, strict_parse, LogReadError, Policy, Value,
+    canonical, evaluate, load_policy, read_log, strict_parse, LogReadError, Match, Matcher, Policy,
+    Rule, Value,
 };
 use sha2::{Digest, Sha256};
 
@@ -2360,4 +2361,82 @@ fn an_inline_option_value_keeps_its_os_bytes() {
     assert_eq!(output.status.code(), Some(0));
     assert!(log_path.exists());
     assert_eq!(read_log(&log_path).unwrap().len(), 1);
+}
+
+#[test]
+fn a_hand_built_rewrite_rule_without_a_substitute_never_fires() {
+    // load_policy refuses a rewrite rule carrying no
+    // substitute, so this shape stands only for a policy object
+    // a caller built by hand through the public types. The
+    // judge arm of the same pass states the doctrine for that
+    // case, the rule simply never fires, and the rewrite arm
+    // answers the same way. Before the repair this evaluation
+    // panicked on the missing substitute.
+    let policy = Policy {
+        default: "deny".to_string(),
+        rules: vec![Rule {
+            id: "soften-ls".to_string(),
+            kind: "shell".to_string(),
+            action: "rewrite".to_string(),
+            reason: "a reason".to_string(),
+            match_: Match {
+                argv0: Some(Matcher::Exact("ls".to_string())),
+                ..Match::default()
+            },
+            substitute: None,
+        }],
+        judgment: None,
+    };
+    let decision = evaluate(Some(&policy), None, &shell_call(&["ls"]), AT);
+    assert_eq!(field(&decision, "decision"), &s("deny"));
+    assert_eq!(
+        field(&decision, "source"),
+        &Value::obj(vec![("type", s("default"))])
+    );
+    assert_eq!(field(&decision, "rewritten_call"), &Value::Null);
+}
+
+#[test]
+fn evaluation_continues_past_a_hand_built_rewrite_rule_without_a_substitute() {
+    // The companion case to the pin above, named in review.
+    // The incomplete rewrite rule never fires, and evaluation
+    // continues to the next rule rather than breaking to the
+    // default: a matching allow rule standing after it decides
+    // the call. A rewrite arm that stopped the pass at the
+    // incomplete rule would answer the default deny here.
+    let policy = Policy {
+        default: "deny".to_string(),
+        rules: vec![
+            Rule {
+                id: "soften-ls".to_string(),
+                kind: "shell".to_string(),
+                action: "rewrite".to_string(),
+                reason: "a reason".to_string(),
+                match_: Match {
+                    argv0: Some(Matcher::Exact("ls".to_string())),
+                    ..Match::default()
+                },
+                substitute: None,
+            },
+            Rule {
+                id: "allow-ls".to_string(),
+                kind: "shell".to_string(),
+                action: "allow".to_string(),
+                reason: "a reason".to_string(),
+                match_: Match {
+                    argv0: Some(Matcher::Exact("ls".to_string())),
+                    ..Match::default()
+                },
+                substitute: None,
+            },
+        ],
+        judgment: None,
+    };
+    let decision = evaluate(Some(&policy), None, &shell_call(&["ls"]), AT);
+    assert_eq!(field(&decision, "decision"), &s("allow"));
+    assert_eq!(
+        field(&decision, "source"),
+        &Value::obj(vec![("type", s("rule")), ("rule", s("allow-ls"))])
+    );
+    assert_eq!(field(&decision, "rewritten_call"), &Value::Null);
 }
