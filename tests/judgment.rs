@@ -3583,3 +3583,96 @@ fn the_doctrine_wording_stands_in_the_contract_and_the_exhibit() {
         "the built verdict instructions differ from the exhibit text"
     );
 }
+
+// --- the worked examples in the prose -------------------------------------------
+
+#[test]
+fn the_readme_judge_example_carries_the_request_digest_the_gate_builds() {
+    // PC-A45. The README's judge example prints three
+    // records of one referred call, the referred allow, the
+    // no transport escalate, and the audit example's sampled
+    // record, and each carries the request digest of the
+    // referral. The digest is a function of the doctrine
+    // wording the request embeds, so a doctrine amendment
+    // that regenerates the corpus requests and forgets the
+    // example leaves the printed digest naming a request the
+    // gate no longer builds, and nothing a reader can run
+    // shows it. This pin recomputes the digest from the
+    // example's own printed policy and call, through the
+    // recording transport, answering with the example's own
+    // printed reply, and asserts the README carries the
+    // recomputed digest in all three records. Staged against
+    // a README whose printed digest names an earlier
+    // doctrine wording's assembly, the recomputed digest
+    // appears nowhere in the document and the pin fails on
+    // the count.
+    let readme = std::fs::read_to_string(root().join("README.md")).unwrap();
+    let mut policy_doc = None;
+    let mut call_doc = None;
+    let mut reply_text = None;
+    for segment in readme.split("```") {
+        let doc = match strict_parse(segment.trim()) {
+            Ok(doc) => doc,
+            Err(_) => continue,
+        };
+        match doc.get("format").and_then(|value| value.as_str()) {
+            Some("portcullis-policy/1") => policy_doc = Some(doc.clone()),
+            Some("portcullis-call/1") => call_doc = Some(doc.clone()),
+            _ => {}
+        }
+        if doc.get("answers").is_some() {
+            reply_text = Some(segment.trim().to_string());
+        }
+    }
+    let policy_doc = policy_doc.expect("the README prints no policy document");
+    let call_doc = call_doc.expect("the README prints no call document");
+    let reply_text = reply_text.expect("the README prints no reply document");
+    let transport = StubTransport::replying(&reply_text);
+    decide_with(&policy_doc, &call_doc, &transport);
+    let requests = transport.requests.borrow();
+    assert_eq!(requests.len(), 1, "the example's call is referred once");
+    let digest = call_digest(&requests[0]).to_string();
+    assert_eq!(
+        readme.matches(&digest).count(),
+        3,
+        "the three records of the README judge example carry {digest} or another digest stands in their place"
+    );
+}
+
+#[test]
+fn the_contracts_a11_example_names_the_recorded_request_digest() {
+    // PC-A46. Obligation PC-26 prints the request of the
+    // recorded case a11 and a digest line under it, and the
+    // obligation's own words claim the line names the bytes
+    // a reader assembles from the template and the exhibit.
+    // The recorded fixture of case a11 carries that digest
+    // in its expected record. This pin asserts the printed
+    // line and the recorded digest are one string. Staged
+    // against a contract whose printed line names an earlier
+    // doctrine wording's assembly, the two differ and the
+    // pin fails on the equality.
+    let contract = contract_text();
+    let printed: Vec<&str> = contract
+        .lines()
+        .filter(|line| {
+            line.len() == 71
+                && line.starts_with("sha256:")
+                && line[7..].chars().all(|c| c.is_ascii_hexdigit())
+        })
+        .collect();
+    assert_eq!(
+        printed.len(),
+        1,
+        "the contract prints exactly one standalone digest line"
+    );
+    let fixtures_dir = root().join("tests").join("fixtures").join("judgment");
+    let text = std::fs::read_to_string(fixtures_dir.join("a11.json")).unwrap();
+    let fixture = strict_parse(&text).unwrap();
+    let recorded = model_field(field(&fixture, "expected"), "request_digest")
+        .as_str()
+        .unwrap();
+    assert_eq!(
+        printed[0], recorded,
+        "the digest line under the printed request of case a11 differs from the digest the fixture records"
+    );
+}
