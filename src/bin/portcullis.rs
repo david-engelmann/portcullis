@@ -250,6 +250,22 @@ fn check(
     }
 }
 
+/// Refuse a log read in the words both the log command and
+/// the audit command print for it, the corruption sentence
+/// at exit 1 and the caller's own words at exit 2.
+fn log_read_refusal(error: LogReadError) -> i32 {
+    match error {
+        LogReadError::Corruption(exc) => {
+            fail(&format!("the audit log is corrupt at {exc}"));
+            1
+        }
+        LogReadError::Caller(exc) => {
+            fail(&exc.0);
+            2
+        }
+    }
+}
+
 fn log(log_path: PathBuf) -> i32 {
     match read_log(&log_path) {
         Ok(records) => {
@@ -262,14 +278,7 @@ fn log(log_path: PathBuf) -> i32 {
             }
             0
         }
-        Err(LogReadError::Corruption(exc)) => {
-            fail(&format!("the audit log is corrupt at {exc}"));
-            1
-        }
-        Err(LogReadError::Caller(exc)) => {
-            fail(&exc.0);
-            2
-        }
+        Err(error) => log_read_refusal(error),
     }
 }
 
@@ -283,14 +292,7 @@ fn audit(log_path: PathBuf, sample_size: usize) -> i32 {
             }
             0
         }
-        Err(LogReadError::Corruption(exc)) => {
-            fail(&format!("the audit log is corrupt at {exc}"));
-            1
-        }
-        Err(LogReadError::Caller(exc)) => {
-            fail(&exc.0);
-            2
-        }
+        Err(error) => log_read_refusal(error),
     }
 }
 
@@ -396,7 +398,16 @@ fn parse_subcommand(command: &str, args: &[OsString]) -> Result<ParsedArgs, (Str
                 None => {
                     index += 1;
                     match args.get(index) {
-                        Some(value) => PathBuf::from(value),
+                        Some(value) => {
+                            let value_text = value.to_string_lossy();
+                            if value_text == "--" || known.contains(&value_text.as_ref()) {
+                                return Err((
+                                    format!("argument {option}: expected one argument"),
+                                    2,
+                                ));
+                            }
+                            PathBuf::from(value)
+                        }
                         None => {
                             return Err((format!("argument {option}: expected one argument"), 2));
                         }
