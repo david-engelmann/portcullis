@@ -489,6 +489,22 @@ fn check(
     dict_to_py(py, &decision)
 }
 
+/// Word one log read failure as the exception it raises, the
+/// one wording both read_log and audit_log raise by. A log
+/// that does not stand raises in the caller error class with
+/// the library's own words, and a log with a bad line raises
+/// in the corruption class with the full sentence the command
+/// line tool prints for it, line number included.
+fn log_read_failure(error: LogReadError) -> PyErr {
+    match error {
+        LogReadError::Caller(caller) => CallerError::new_err(caller.0),
+        LogReadError::Corruption(corruption) => LogCorruptionError::new_err(format!(
+            "the audit log is corrupt at line {}, {}",
+            corruption.line_number, corruption.detail
+        )),
+    }
+}
+
 /// Read the records of one audit log back as plain dicts.
 ///
 /// A log that does not stand raises in the caller error class
@@ -499,13 +515,7 @@ fn check(
 fn read_log(py: Python<'_>, log: PathBuf) -> PyResult<Vec<Py<PyDict>>> {
     let records = py
         .detach(|| portcullis_core::read_log(&log))
-        .map_err(|error| match error {
-            LogReadError::Caller(caller) => CallerError::new_err(caller.0),
-            LogReadError::Corruption(corruption) => LogCorruptionError::new_err(format!(
-                "the audit log is corrupt at line {}, {}",
-                corruption.line_number, corruption.detail
-            )),
-        })?;
+        .map_err(log_read_failure)?;
     let mut converted = Vec::with_capacity(records.len());
     for record in &records {
         converted.push(dict_to_py(py, record)?);
@@ -558,13 +568,7 @@ fn audit_log(py: Python<'_>, log: PathBuf, sample: &Bound<'_, PyAny>) -> PyResul
     };
     let report = py
         .detach(|| portcullis_core::audit_log(&log, named))
-        .map_err(|error| match error {
-            LogReadError::Caller(caller) => CallerError::new_err(caller.0),
-            LogReadError::Corruption(corruption) => LogCorruptionError::new_err(format!(
-                "the audit log is corrupt at line {}, {}",
-                corruption.line_number, corruption.detail
-            )),
-        })?;
+        .map_err(log_read_failure)?;
     let dict = dict_to_py(py, &report)?;
     if above_word {
         dict.bind(py).set_item("requested", sample)?;
