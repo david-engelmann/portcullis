@@ -2849,15 +2849,7 @@ fn validate_decision_record(
         return Err(corruption(format!("{what} carries an instant of no use")));
     }
     let digest = record.get("call_digest").unwrap();
-    let digest_ok = match digest.as_str() {
-        Some(text) => {
-            text.starts_with("sha256:")
-                && text.len() == "sha256:".len() + 64
-                && text[7..].chars().all(|c| c.is_ascii_hexdigit())
-        }
-        None => false,
-    };
-    if !digest_ok {
+    if !digest_form_ok(digest) {
         return Err(corruption(format!("{what} carries a digest of no use")));
     }
     let decision_value = record.get("decision").unwrap();

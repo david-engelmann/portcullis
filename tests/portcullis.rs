@@ -1009,6 +1009,35 @@ malformed_case!(
 );
 
 #[test]
+fn an_option_name_in_value_position_names_the_option_that_lacks_its_value() {
+    let result = run_cli(
+        &["check", "--policy", "--log", "audit.jsonl", "call.json"],
+        None,
+    );
+    assert_eq!(result.status, 2);
+    assert!(
+        result
+            .stderr
+            .contains("portcullis: error: argument --policy: expected one argument"),
+        "{}",
+        result.stderr
+    );
+}
+
+#[test]
+fn the_separator_in_value_position_names_the_option_that_lacks_its_value() {
+    let result = run_cli(&["check", "--policy", "--", "call.json"], None);
+    assert_eq!(result.status, 2);
+    assert!(
+        result
+            .stderr
+            .contains("portcullis: error: argument --policy: expected one argument"),
+        "{}",
+        result.stderr
+    );
+}
+
+#[test]
 fn a_call_with_duplicate_keys_never_reaches_a_decision() {
     let dir = temp_dir("duplicate-call");
     let call_path = write_text(
