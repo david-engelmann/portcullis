@@ -2366,3 +2366,48 @@ fn a_hand_built_rewrite_rule_without_a_substitute_never_fires() {
     );
     assert_eq!(field(&decision, "rewritten_call"), &Value::Null);
 }
+
+#[test]
+fn evaluation_continues_past_a_hand_built_rewrite_rule_without_a_substitute() {
+    // The companion case to the pin above, named in review.
+    // The incomplete rewrite rule never fires, and evaluation
+    // continues to the next rule rather than breaking to the
+    // default: a matching allow rule standing after it decides
+    // the call. A rewrite arm that stopped the pass at the
+    // incomplete rule would answer the default deny here.
+    let policy = Policy {
+        default: "deny".to_string(),
+        rules: vec![
+            Rule {
+                id: "soften-ls".to_string(),
+                kind: "shell".to_string(),
+                action: "rewrite".to_string(),
+                reason: "a reason".to_string(),
+                match_: Match {
+                    argv0: Some(Matcher::Exact("ls".to_string())),
+                    ..Match::default()
+                },
+                substitute: None,
+            },
+            Rule {
+                id: "allow-ls".to_string(),
+                kind: "shell".to_string(),
+                action: "allow".to_string(),
+                reason: "a reason".to_string(),
+                match_: Match {
+                    argv0: Some(Matcher::Exact("ls".to_string())),
+                    ..Match::default()
+                },
+                substitute: None,
+            },
+        ],
+        judgment: None,
+    };
+    let decision = evaluate(Some(&policy), None, &shell_call(&["ls"]), AT);
+    assert_eq!(field(&decision, "decision"), &s("allow"));
+    assert_eq!(
+        field(&decision, "source"),
+        &Value::obj(vec![("type", s("rule")), ("rule", s("allow-ls"))])
+    );
+    assert_eq!(field(&decision, "rewritten_call"), &Value::Null);
+}
