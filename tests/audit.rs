@@ -12,35 +12,22 @@
 //! one the library carries, so a drift in either reading
 //! fails a pin.
 
-use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 
 use portcullis::{
     append_decision, audit_log, call_digest, canonical, evaluate, evaluate_with_transport,
-    load_policy, read_log, strict_parse, FixtureTransport, JudgeTransport, LogReadError,
-    TransportError, Value,
+    load_policy, read_log, strict_parse, FixtureTransport, LogReadError, Value,
 };
+
+#[allow(dead_code)]
+mod common;
+use common::{field, root, run_cli, s, CliOutput, StubTransport};
 
 const AT: &str = "2026-11-04T10:00:00+00:00";
 const BATTERY_AT: &str = "2026-11-02T10:00:00+00:00";
 
-fn root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
-
 fn temp_dir(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("portcullis-audit-{}-{tag}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
-}
-
-fn s(text: &str) -> Value {
-    Value::text(text)
-}
-
-fn field<'a>(doc: &'a Value, key: &str) -> &'a Value {
-    doc.get(key).unwrap()
+    common::temp_dir_with("portcullis-audit", tag)
 }
 
 fn score_of(record: &Value) -> Option<f64> {
@@ -192,30 +179,6 @@ fn check_report_shape(report: &Value) {
 }
 
 // --- building one mixed log with the gate itself ------------------------------
-
-struct StubTransport {
-    outcome: Result<String, String>,
-    requests: RefCell<Vec<Value>>,
-}
-
-impl StubTransport {
-    fn replying(body: &str) -> StubTransport {
-        StubTransport {
-            outcome: Ok(body.to_string()),
-            requests: RefCell::new(Vec::new()),
-        }
-    }
-}
-
-impl JudgeTransport for StubTransport {
-    fn consult(&self, request: &Value) -> Result<String, TransportError> {
-        self.requests.borrow_mut().push(request.clone());
-        match &self.outcome {
-            Ok(body) => Ok(body.clone()),
-            Err(detail) => Err(TransportError(detail.clone())),
-        }
-    }
-}
 
 fn fixture_text(relative: &str) -> String {
     std::fs::read_to_string(root().join("tests").join("fixtures").join(relative)).unwrap()
@@ -416,6 +379,21 @@ fn a_log_of_only_unscored_records_reads_as_its_own_class() {
     assert!(field(&report, "sample").as_array().unwrap().is_empty());
 }
 
+/// The tamper two pins stage against the reader: the second
+/// line of a log, parsed, its decision set to rewrite, and
+/// the line re-canonicalized, ready to stand in the lines it
+/// came from.
+fn tampered_second_line(lines: &[String]) -> String {
+    let second = strict_parse(&lines[1]).unwrap();
+    let mut pairs: Vec<(String, Value)> = second.as_object().unwrap().clone();
+    for (key, value) in pairs.iter_mut() {
+        if key == "decision" {
+            *value = s("rewrite");
+        }
+    }
+    String::from_utf8(canonical(&Value::Object(pairs))).unwrap()
+}
+
 #[test]
 fn a_corrupt_line_after_ranked_lines_refuses_the_audit_whole_and_names_the_line() {
     let dir = temp_dir("corrupt-after");
@@ -429,13 +407,7 @@ fn a_corrupt_line_after_ranked_lines_refuses_the_audit_whole_and_names_the_line(
     let mut lines: Vec<String> = text.lines().map(|line| line.to_string()).collect();
     let second = strict_parse(&lines[1]).unwrap();
     assert_eq!(field(&second, "format"), &s("portcullis-decision/2"));
-    let mut pairs: Vec<(String, Value)> = second.as_object().unwrap().clone();
-    for (key, value) in pairs.iter_mut() {
-        if key == "decision" {
-            *value = s("rewrite");
-        }
-    }
-    lines[1] = String::from_utf8(canonical(&Value::Object(pairs))).unwrap();
+    lines[1] = tampered_second_line(&lines);
     text = lines.join("\n");
     text.push('\n');
     std::fs::write(&log_path, text).unwrap();
@@ -640,25 +612,6 @@ fn a_missing_log_is_the_landed_caller_error() {
 
 // --- the command line surface, PC-24 ----------------------------------------------
 
-struct CliOutput {
-    status: i32,
-    stdout: String,
-    stderr: String,
-}
-
-fn run_cli(arguments: &[&str]) -> CliOutput {
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_portcullis"))
-        .args(arguments)
-        .current_dir(root())
-        .output()
-        .unwrap();
-    CliOutput {
-        status: output.status.code().unwrap_or(-1),
-        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-    }
-}
-
 fn write_hand_log(dir: &Path) -> PathBuf {
     let log_path = dir.join("audit.jsonl");
     let record = one_ranked_record();
@@ -674,13 +627,16 @@ fn the_audit_subcommand_prints_the_library_report_byte_for_byte() {
     let log_path = dir.join("audit.jsonl");
     build_mixed_log(&log_path);
     let library = audit_log(&log_path, 3).unwrap();
-    let result = run_cli(&[
-        "audit",
-        "--log",
-        log_path.to_str().unwrap(),
-        "--sample",
-        "3",
-    ]);
+    let result = run_cli(
+        &[
+            "audit",
+            "--log",
+            log_path.to_str().unwrap(),
+            "--sample",
+            "3",
+        ],
+        None,
+    );
     assert_eq!(result.status, 0, "stderr {}", result.stderr);
     let printed = format!("{}\n", String::from_utf8(canonical(&library)).unwrap());
     assert_eq!(result.stdout, printed);
@@ -692,24 +648,20 @@ fn the_audit_subcommand_answers_a_corrupt_log_at_exit_one_with_the_log_sentence(
     let log_path = write_hand_log(&dir);
     let mut text = String::from_utf8(read_bytes(&log_path)).unwrap();
     let mut lines: Vec<String> = text.lines().map(|line| line.to_string()).collect();
-    let second = strict_parse(&lines[1]).unwrap();
-    let mut pairs: Vec<(String, Value)> = second.as_object().unwrap().clone();
-    for (key, value) in pairs.iter_mut() {
-        if key == "decision" {
-            *value = s("rewrite");
-        }
-    }
-    lines[1] = String::from_utf8(canonical(&Value::Object(pairs))).unwrap();
+    lines[1] = tampered_second_line(&lines);
     text = lines.join("\n");
     text.push('\n');
     std::fs::write(&log_path, text).unwrap();
-    let result = run_cli(&[
-        "audit",
-        "--log",
-        log_path.to_str().unwrap(),
-        "--sample",
-        "2",
-    ]);
+    let result = run_cli(
+        &[
+            "audit",
+            "--log",
+            log_path.to_str().unwrap(),
+            "--sample",
+            "2",
+        ],
+        None,
+    );
     assert_eq!(result.status, 1);
     assert!(
         result
@@ -724,7 +676,10 @@ fn the_audit_subcommand_answers_a_corrupt_log_at_exit_one_with_the_log_sentence(
 fn the_audit_subcommand_answers_a_missing_log_at_exit_two() {
     let dir = temp_dir("cli-missing");
     let missing = dir.join("no-such-log.jsonl");
-    let result = run_cli(&["audit", "--log", missing.to_str().unwrap(), "--sample", "2"]);
+    let result = run_cli(
+        &["audit", "--log", missing.to_str().unwrap(), "--sample", "2"],
+        None,
+    );
     assert_eq!(result.status, 2);
     assert!(
         result.stderr.contains("does not stand"),
@@ -743,10 +698,10 @@ fn the_audit_subcommand_refuses_bad_sample_arguments_at_exit_two() {
         vec!["audit", "--log", log, "--sample", "two"],
         vec!["audit", "--log", log],
     ] {
-        let result = run_cli(&arguments);
+        let result = run_cli(&arguments, None);
         assert_eq!(result.status, 2, "arguments {arguments:?}");
     }
-    let zero = run_cli(&["audit", "--log", log, "--sample", "0"]);
+    let zero = run_cli(&["audit", "--log", log, "--sample", "0"], None);
     assert!(
         zero.stderr
             .contains("the sample size must stand at one or above"),
@@ -754,7 +709,7 @@ fn the_audit_subcommand_refuses_bad_sample_arguments_at_exit_two() {
         zero.stderr
     );
     for token in ["two", "99999999999999999999999999999999"] {
-        let result = run_cli(&["audit", "--log", log, "--sample", token]);
+        let result = run_cli(&["audit", "--log", log, "--sample", token], None);
         assert_eq!(result.status, 2, "token {token}");
         assert!(
             result
@@ -768,7 +723,7 @@ fn the_audit_subcommand_refuses_bad_sample_arguments_at_exit_two() {
 
 #[test]
 fn the_audit_help_states_the_ranking_and_that_it_decides_nothing() {
-    let result = run_cli(&["audit", "-h"]);
+    let result = run_cli(&["audit", "-h"], None);
     assert_eq!(result.status, 0);
     assert!(
         result
@@ -784,7 +739,7 @@ fn the_audit_help_states_the_ranking_and_that_it_decides_nothing() {
         "stdout {}",
         result.stdout
     );
-    let main = run_cli(&["-h"]);
+    let main = run_cli(&["-h"], None);
     assert_eq!(main.status, 0);
     assert!(
         main.stdout.contains("{check,log,audit}"),
