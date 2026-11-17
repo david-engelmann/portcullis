@@ -771,3 +771,40 @@ def test_audit_log_raises_the_corruption_class_over_a_corrupt_log(tmp_path):
     result = run_cli("audit", "--log", str(log), "--sample", "2")
     assert result.returncode == 1
     assert result.stderr.strip() == f"error: {refused.value}"
+
+
+def test_the_digit_bound_holds_at_its_edge_through_the_binding(tmp_path):
+    log = tmp_path / "audit.jsonl"
+    policy = fixture("policy-full.json")
+    at_the_bound = {
+        "format": "portcullis-call/1",
+        "kind": "network",
+        "method": "GET",
+        "host": "example.com",
+        "port": 10**4299,
+    }
+    decision = portcullis.check(policy, at_the_bound, log, AT)
+    assert decision["decision"] == "deny"
+    assert decision["source"] == {"type": "malformed"}
+    past_the_bound = dict(at_the_bound, port=10**4300)
+    with pytest.raises(portcullis.CallerError) as refused:
+        portcullis.check(policy, past_the_bound, log, AT)
+    assert str(refused.value) == "the document carries an integer too wide to parse"
+
+
+def test_the_depth_bound_holds_at_its_edge_through_the_binding(tmp_path):
+    log = tmp_path / "audit.jsonl"
+    policy = fixture("policy-full.json")
+
+    def nested(levels):
+        value = 1
+        for _ in range(levels):
+            value = [value]
+        return value
+
+    decision = portcullis.check(policy, nested(1000), log, AT)
+    assert decision["decision"] == "deny"
+    assert decision["source"] == {"type": "malformed"}
+    with pytest.raises(portcullis.CallerError) as refused:
+        portcullis.check(policy, nested(1001), log, AT)
+    assert str(refused.value) == "the document nests too deeply to parse"

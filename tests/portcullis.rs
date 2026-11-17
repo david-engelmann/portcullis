@@ -2361,3 +2361,70 @@ fn an_inline_option_value_keeps_its_os_bytes() {
     assert!(log_path.exists());
     assert_eq!(read_log(&log_path).unwrap().len(), 1);
 }
+
+// --- the reader's stated bounds, staged at their edges ------------------
+//
+// The port amendment in CONTRACT.md states the 4,300 digit parse
+// limit and the one thousand nesting bound as contract behaviour,
+// and the binding mirrors both bounds as constants of its own.
+// These pins hold each bound at its exact edge on this surface;
+// the smoke suite holds the same edges on the binding's surface.
+
+#[test]
+fn an_integer_of_exactly_the_digit_bound_parses() {
+    let text = "1".repeat(4_300);
+    let value = strict_parse(&text).unwrap();
+    assert_eq!(String::from_utf8(canonical(&value)).unwrap(), text);
+}
+
+#[test]
+fn an_integer_one_digit_past_the_bound_is_refused() {
+    let text = "1".repeat(4_301);
+    assert_eq!(
+        strict_parse(&text).unwrap_err(),
+        "the document carries an integer too wide to parse"
+    );
+}
+
+#[test]
+fn a_document_nested_to_the_depth_bound_parses() {
+    let text = format!("{}1{}", "[".repeat(1_000), "]".repeat(1_000));
+    assert!(strict_parse(&text).is_ok());
+}
+
+#[test]
+fn a_document_nested_one_level_past_the_depth_bound_is_refused() {
+    let text = format!("{}1{}", "[".repeat(1_001), "]".repeat(1_001));
+    assert_eq!(
+        strict_parse(&text).unwrap_err(),
+        "the document nests too deeply to parse"
+    );
+}
+
+#[test]
+fn a_call_file_nested_past_the_depth_bound_is_a_caller_error() {
+    let dir = temp_dir("depth-bound-call");
+    let policy_path = write_json(&dir.join("policy.json"), &policy_doc(vec![], "deny"));
+    let call_path = write_text(
+        &dir.join("call.json"),
+        &format!("{}1{}", "[".repeat(1_001), "]".repeat(1_001)),
+    );
+    let result = run_cli(
+        &[
+            "check",
+            "--policy",
+            policy_path.to_str().unwrap(),
+            "--log",
+            dir.join("audit.jsonl").to_str().unwrap(),
+            call_path.to_str().unwrap(),
+        ],
+        None,
+    );
+    assert_eq!(result.status, 2);
+    assert_eq!(result.stdout, "");
+    assert!(
+        result.stderr.contains("does not parse as strict JSON"),
+        "{}",
+        result.stderr
+    );
+}
