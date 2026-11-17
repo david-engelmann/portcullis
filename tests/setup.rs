@@ -519,3 +519,26 @@ fn codepoint_scan_skips_a_file_with_an_uppercase_binary_suffix() {
     assert!(result.stdout.contains("em dash U+2014 count 0"));
     assert!(result.stdout.contains("en dash U+2013 count 0"));
 }
+
+#[cfg(unix)]
+#[test]
+fn the_scanner_answers_a_failed_output_write_with_exit_two() {
+    // The scanner's lines travel through a checked writer, so
+    // an output stream that refuses the write is a scan error
+    // at exit 2. On the standing code the hit line's print
+    // macro panics on the failed write and the process dies
+    // at 101.
+    let root = temp_dir("codepoint-full");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("dash.txt"), "before \u{2014} after\n").unwrap();
+    let full = std::fs::OpenOptions::new()
+        .write(true)
+        .open("/dev/full")
+        .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_codepoint_scan"))
+        .arg(&root)
+        .stdout(std::process::Stdio::from(full))
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+}
