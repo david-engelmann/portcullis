@@ -2610,3 +2610,151 @@ fn a_space_carrying_token_stands_as_an_option_value() {
     );
     assert!(log_path.exists());
 }
+
+fn run_cli_in(dir: &Path, arguments: &[&str]) -> CliOutput {
+    let output = Command::new(env!("CARGO_BIN_EXE_portcullis"))
+        .args(arguments)
+        .current_dir(dir)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .unwrap();
+    CliOutput {
+        status: output.status.code().unwrap_or(-1),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    }
+}
+
+#[test]
+fn a_space_carrying_token_in_option_position_stands_as_the_call() {
+    // The Python parser never reads a token carrying a space
+    // as an option string, so a call file literally named
+    // with a leading hyphen and a space, handed over as one
+    // argument, is the call positional: the check runs, the
+    // missing policy draws its policy error decision at exit
+    // one, and the record is appended. A parser that routes
+    // every hyphen led token into its option machinery
+    // refuses the token as unrecognized at exit two and
+    // decides nothing.
+    let dir = temp_dir("positional-space-call");
+    write_json(&dir.join("-policy file.json"), &shell_call(&["ls"]));
+    let policy_path = dir.join("policy.json");
+    let log_path = dir.join("audit.jsonl");
+    let result = run_cli_in(
+        &dir,
+        &[
+            "check",
+            "--policy",
+            policy_path.to_str().unwrap(),
+            "--log",
+            log_path.to_str().unwrap(),
+            "-policy file.json",
+        ],
+    );
+    assert_eq!(result.status, 1);
+    assert!(
+        result.stdout.contains("\"decision\":\"deny\""),
+        "{}",
+        result.stdout
+    );
+    assert!(log_path.exists());
+}
+
+#[test]
+fn a_negative_number_shape_in_option_position_stands_as_the_call() {
+    // The Python parser takes a negative number's complete
+    // shape as a positional because no option of this command
+    // line looks like a negative number, so a call file named
+    // -1 is decided like any other call. The same refusal at
+    // exit two answers it on a parser that refuses every
+    // hyphen led token where it stands.
+    let dir = temp_dir("positional-number-call");
+    write_json(&dir.join("-1"), &shell_call(&["ls"]));
+    let policy_path = dir.join("policy.json");
+    let log_path = dir.join("audit.jsonl");
+    let result = run_cli_in(
+        &dir,
+        &[
+            "check",
+            "--policy",
+            policy_path.to_str().unwrap(),
+            "--log",
+            log_path.to_str().unwrap(),
+            "-1",
+        ],
+    );
+    assert_eq!(result.status, 1);
+    assert!(
+        result.stdout.contains("\"decision\":\"deny\""),
+        "{}",
+        result.stdout
+    );
+    assert!(log_path.exists());
+}
+
+#[test]
+fn the_log_subcommand_refuses_the_space_carrying_token_with_the_standing_words() {
+    // The log subcommand takes no positional, so the token
+    // the parser now reads as a positional still draws the
+    // refusal, with the same words and the same exit the
+    // option machinery answered before. This guard passes on
+    // the standing code by design, the words being identical
+    // through either branch, and fails on a repair that
+    // routes the token anywhere else.
+    let dir = temp_dir("positional-space-log");
+    let log_path = dir.join("audit.jsonl");
+    let result = run_cli(
+        &[
+            "log",
+            "--log",
+            log_path.to_str().unwrap(),
+            "-policy file.json",
+        ],
+        None,
+    );
+    assert_eq!(result.status, 2);
+    assert_eq!(result.stdout, "");
+    assert!(
+        result
+            .stderr
+            .contains("portcullis: error: unrecognized arguments: -policy file.json"),
+        "{}",
+        result.stderr
+    );
+    assert!(!log_path.exists());
+}
+
+#[test]
+fn an_equals_form_with_a_space_in_its_value_stands_as_the_option() {
+    // The equals form takes its inline value whole, the
+    // space standing after the equals sign, so a policy path
+    // carrying a space still loads through the option and
+    // the call is decided. A blanket repair that reads every
+    // space carrying token as a positional would leave the
+    // option unfilled and answer a missing argument refusal
+    // at exit two instead. This guard passes on the standing
+    // code by design.
+    let dir = temp_dir("positional-equals-space");
+    let call_path = write_json(&dir.join("call.json"), &shell_call(&["ls"]));
+    let policy_path = dir.join("my policy.json");
+    let log_path = dir.join("audit.jsonl");
+    let inline = format!("--policy={}", policy_path.to_str().unwrap());
+    let result = run_cli(
+        &[
+            "check",
+            inline.as_str(),
+            "--log",
+            log_path.to_str().unwrap(),
+            call_path.to_str().unwrap(),
+        ],
+        None,
+    );
+    assert_eq!(result.status, 1);
+    assert!(
+        result.stdout.contains("\"decision\":\"deny\""),
+        "{}",
+        result.stdout
+    );
+    assert!(log_path.exists());
+}
