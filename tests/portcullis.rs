@@ -2546,3 +2546,67 @@ fn a_negative_number_shape_and_the_bare_hyphen_stand_as_option_values() {
         assert!(log_path.exists(), "{value}");
     }
 }
+
+#[test]
+fn malformed_negative_number_shapes_name_the_option_that_lacks_its_value() {
+    // The Python parser accepts a negative number's complete
+    // shape as an option value and refuses the malformed
+    // suffixes as options, so each of these still names the
+    // option that lacks its value at exit two.
+    let dir = temp_dir("option-malformed-value");
+    let call_path = write_json(&dir.join("call.json"), &shell_call(&["ls"]));
+    for (tag, value) in [("suffix", "-1abc"), ("second-point", "-1.2.3")] {
+        let log_path = dir.join(format!("audit-{tag}.jsonl"));
+        let result = run_cli(
+            &[
+                "check",
+                "--policy",
+                value,
+                "--log",
+                log_path.to_str().unwrap(),
+                call_path.to_str().unwrap(),
+            ],
+            None,
+        );
+        assert_eq!(result.status, 2, "{value}");
+        assert_eq!(result.stdout, "", "{value}");
+        assert!(
+            result
+                .stderr
+                .contains("portcullis: error: argument --policy: expected one argument"),
+            "{value}: {}",
+            result.stderr
+        );
+        assert!(!log_path.exists(), "{value}");
+    }
+}
+
+#[test]
+fn a_space_carrying_token_stands_as_an_option_value() {
+    // The Python parser never reads a token carrying a space as
+    // an option, so such a token standing where a value is
+    // expected reaches the policy load and draws its policy
+    // error decision at exit one, like the bare hyphen and the
+    // negative number's shape.
+    let dir = temp_dir("option-space-value");
+    let call_path = write_json(&dir.join("call.json"), &shell_call(&["ls"]));
+    let log_path = dir.join("audit.jsonl");
+    let result = run_cli(
+        &[
+            "check",
+            "--policy",
+            "-policy file.json",
+            "--log",
+            log_path.to_str().unwrap(),
+            call_path.to_str().unwrap(),
+        ],
+        None,
+    );
+    assert_eq!(result.status, 1);
+    assert!(
+        result.stdout.contains("\"decision\":\"deny\""),
+        "{}",
+        result.stdout
+    );
+    assert!(log_path.exists());
+}
