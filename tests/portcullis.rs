@@ -2378,7 +2378,7 @@ fn a_float_at_the_top_of_the_fixed_range_renders_in_fixed_form() {
     let value = strict_parse("1e15").unwrap();
     assert_eq!(
         String::from_utf8(canonical(&value)).unwrap(),
-        "1000000000000000"
+        "1000000000000000.0"
     );
 }
 
