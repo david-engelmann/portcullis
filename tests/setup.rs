@@ -529,15 +529,15 @@ fn the_scanner_answers_a_failed_output_write_with_exit_two() {
     // macro panics on the failed write and the process dies
     // at 101.
     let root = temp_dir("codepoint-full");
-    fs::create_dir_all(&root).unwrap();
-    fs::write(root.join("dash.txt"), "before \u{2014} after\n").unwrap();
-    let full = fs::OpenOptions::new()
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("dash.txt"), "before \u{2014} after\n").unwrap();
+    let full = std::fs::OpenOptions::new()
         .write(true)
         .open("/dev/full")
         .unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_codepoint_scan"))
         .arg(&root)
-        .stdout(Stdio::from(full))
+        .stdout(std::process::Stdio::from(full))
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(2));
