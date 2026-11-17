@@ -1015,6 +1015,7 @@ fn an_option_name_in_value_position_names_the_option_that_lacks_its_value() {
         None,
     );
     assert_eq!(result.status, 2);
+    assert_eq!(result.stdout, "");
     assert!(
         result
             .stderr
@@ -1028,6 +1029,7 @@ fn an_option_name_in_value_position_names_the_option_that_lacks_its_value() {
 fn the_separator_in_value_position_names_the_option_that_lacks_its_value() {
     let result = run_cli(&["check", "--policy", "--", "call.json"], None);
     assert_eq!(result.status, 2);
+    assert_eq!(result.stdout, "");
     assert!(
         result
             .stderr
