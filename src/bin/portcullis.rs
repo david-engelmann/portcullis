@@ -396,7 +396,16 @@ fn parse_subcommand(command: &str, args: &[OsString]) -> Result<ParsedArgs, (Str
                 None => {
                     index += 1;
                     match args.get(index) {
-                        Some(value) => PathBuf::from(value),
+                        Some(value) => {
+                            let value_text = value.to_string_lossy();
+                            if value_text == "--" || known.contains(&value_text.as_ref()) {
+                                return Err((
+                                    format!("argument {option}: expected one argument"),
+                                    2,
+                                ));
+                            }
+                            PathBuf::from(value)
+                        }
                         None => {
                             return Err((format!("argument {option}: expected one argument"), 2));
                         }
