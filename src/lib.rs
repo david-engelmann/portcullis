@@ -119,12 +119,40 @@ impl std::fmt::Display for LogCorruptionError {
     }
 }
 
+impl std::error::Error for CallerError {}
+
+impl std::error::Error for PolicyError {}
+
+impl std::error::Error for MalformedCall {}
+
+impl std::error::Error for LogAppendError {}
+
+impl std::error::Error for LogCorruptionError {}
+
 /// A failure of the log command, either a caller error or
 /// corruption at a named line.
 #[derive(Debug)]
 pub enum LogReadError {
     Caller(CallerError),
     Corruption(LogCorruptionError),
+}
+
+impl std::fmt::Display for LogReadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LogReadError::Caller(error) => std::fmt::Display::fmt(error, f),
+            LogReadError::Corruption(error) => std::fmt::Display::fmt(error, f),
+        }
+    }
+}
+
+impl std::error::Error for LogReadError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            LogReadError::Caller(error) => Some(error),
+            LogReadError::Corruption(error) => Some(error),
+        }
+    }
 }
 
 // --- the document model ------------------------------------------------
@@ -2139,6 +2167,8 @@ impl std::fmt::Display for TransportError {
         f.write_str(&self.0)
     }
 }
+
+impl std::error::Error for TransportError {}
 
 /// The seam a model is consulted through. A transport receives
 /// the exact request document and returns the reply body as
