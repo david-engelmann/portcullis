@@ -1178,6 +1178,58 @@ bad_policy_case!(
         "deny",
     )
 );
+#[test]
+fn a_non_integer_argument_index_names_itself_in_the_refusal() {
+    let doc = policy_doc(
+        vec![plain_rule(
+            "bad-index",
+            "shell",
+            "allow",
+            Value::obj(vec![(
+                "args",
+                arr(vec![Value::obj(vec![
+                    ("index", s("1")),
+                    ("match", matcher("exact", "x")),
+                ])]),
+            )]),
+        )],
+        "deny",
+    );
+    match load_policy(&doc) {
+        Ok(_) => panic!("the policy with a text index loaded"),
+        Err(error) => assert_eq!(
+            error.to_string(),
+            "the match of rule bad-index carries an argument condition whose index is not an integer"
+        ),
+    }
+}
+
+#[test]
+fn an_argument_index_of_zero_keeps_the_position_wording() {
+    let doc = policy_doc(
+        vec![plain_rule(
+            "bad-index",
+            "shell",
+            "allow",
+            Value::obj(vec![(
+                "args",
+                arr(vec![Value::obj(vec![
+                    ("index", Value::int(0)),
+                    ("match", matcher("exact", "x")),
+                ])]),
+            )]),
+        )],
+        "deny",
+    );
+    match load_policy(&doc) {
+        Ok(_) => panic!("the policy with a zero index loaded"),
+        Err(error) => assert_eq!(
+            error.to_string(),
+            "the match of rule bad-index names an argument position below 1"
+        ),
+    }
+}
+
 bad_policy_case!(
     bad_policy_shapes_with_an_unknown_kind,
     policy_doc(
