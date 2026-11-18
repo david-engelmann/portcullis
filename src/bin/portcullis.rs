@@ -29,7 +29,7 @@ const CHECK_USAGE: &str =
     "usage: portcullis check [-h] --policy POLICY --log LOG [--judge COMMAND] [call]";
 const LOG_USAGE: &str = "usage: portcullis log [-h] --log LOG";
 const AUDIT_USAGE: &str = "usage: portcullis audit [-h] --log LOG --sample SAMPLE";
-const CHECK_HELP: &str = "The judge command is an external program the check command consults for a call the policy refers. It receives the request document on its standard input as one canonical line and answers with the reply body on its standard output, under a timeout of thirty seconds the library fixes. With no judge command configured, every referred call is decided on the no transport fallback.";
+const CHECK_HELP: &str = "The judge command is an external program the check command consults for a call the policy refers. It runs through the system shell, so the value may name a program together with its arguments. It receives the request document on its standard input as one canonical line and answers with the reply body on its standard output, under a timeout of thirty seconds the library fixes. With no judge command configured, every referred call is decided on the no transport fallback.";
 const AUDIT_HELP: &str = "The audit ranks recorded calls by their recorded scores and decides nothing. It reads the audit log whole and prints one report naming the count of each class of record and the sample of the highest ranked allows the named size asks for.";
 
 fn fail(message: &str) {

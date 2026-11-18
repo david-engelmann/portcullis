@@ -2186,11 +2186,13 @@ impl JudgeTransport for FixtureTransport {
 }
 
 /// A transport that consults an external judge command. The
-/// command receives the request document on its standard input
-/// as one canonical line and answers with the reply body on its
-/// standard output, under the bound JUDGE_TIMEOUT_SECONDS. A
-/// spawn failure, a nonzero exit, a timeout, and an unreadable
-/// reply channel are each a transport failure.
+/// command runs through the system shell, so its value may name
+/// a program together with that program's arguments. It receives
+/// the request document on its standard input as one canonical
+/// line and answers with the reply body on its standard output,
+/// under the bound JUDGE_TIMEOUT_SECONDS. A spawn failure, a
+/// nonzero exit, a timeout, and an unreadable reply channel are
+/// each a transport failure.
 pub struct SubprocessTransport {
     command: String,
 }
