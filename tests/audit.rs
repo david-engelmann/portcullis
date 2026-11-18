@@ -711,6 +711,7 @@ fn the_audit_subcommand_answers_a_corrupt_log_at_exit_one_with_the_log_sentence(
         "2",
     ]);
     assert_eq!(result.status, 1);
+    assert_eq!(result.stdout, "");
     assert!(
         result
             .stderr
@@ -726,6 +727,7 @@ fn the_audit_subcommand_answers_a_missing_log_at_exit_two() {
     let missing = dir.join("no-such-log.jsonl");
     let result = run_cli(&["audit", "--log", missing.to_str().unwrap(), "--sample", "2"]);
     assert_eq!(result.status, 2);
+    assert_eq!(result.stdout, "");
     assert!(
         result.stderr.contains("does not stand"),
         "stderr {}",
@@ -745,8 +747,10 @@ fn the_audit_subcommand_refuses_bad_sample_arguments_at_exit_two() {
     ] {
         let result = run_cli(&arguments);
         assert_eq!(result.status, 2, "arguments {arguments:?}");
+        assert_eq!(result.stdout, "", "arguments {arguments:?}");
     }
     let zero = run_cli(&["audit", "--log", log, "--sample", "0"]);
+    assert_eq!(zero.stdout, "");
     assert!(
         zero.stderr
             .contains("the sample size must stand at one or above"),
@@ -756,6 +760,7 @@ fn the_audit_subcommand_refuses_bad_sample_arguments_at_exit_two() {
     for token in ["two", "99999999999999999999999999999999"] {
         let result = run_cli(&["audit", "--log", log, "--sample", token]);
         assert_eq!(result.status, 2, "token {token}");
+        assert_eq!(result.stdout, "", "token {token}");
         assert!(
             result
                 .stderr
