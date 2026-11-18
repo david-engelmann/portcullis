@@ -357,8 +357,16 @@ struct ScanOutput {
 }
 
 fn scan_tree(root: &Path) -> ScanOutput {
+    run_scanner(&[root.as_os_str()])
+}
+
+fn scan_tree_with_extra(root: &Path, extra: &str) -> ScanOutput {
+    run_scanner(&[root.as_os_str(), std::ffi::OsStr::new(extra)])
+}
+
+fn run_scanner(args: &[&std::ffi::OsStr]) -> ScanOutput {
     let output = Command::new(env!("CARGO_BIN_EXE_codepoint_scan"))
-        .arg(root)
+        .args(args)
         .output()
         .unwrap();
     ScanOutput {
@@ -518,4 +526,44 @@ fn codepoint_scan_skips_a_file_with_an_uppercase_binary_suffix() {
     assert_eq!(result.status, 0);
     assert!(result.stdout.contains("em dash U+2014 count 0"));
     assert!(result.stdout.contains("en dash U+2013 count 0"));
+}
+
+#[test]
+fn codepoint_scan_refuses_an_argument_after_the_root() {
+    let dir = temp_dir("extra-argument");
+    std::fs::write(dir.join("clean.md"), "clean").unwrap();
+    let result = scan_tree_with_extra(&dir, "second-root");
+    assert_eq!(result.status, 2);
+    assert!(result.stdout.is_empty(), "{}", result.stdout);
+    assert!(result.stderr.contains("second-root"), "{}", result.stderr);
+}
+
+#[test]
+fn codepoint_scan_refuses_an_argument_after_a_dirty_root() {
+    let dir = temp_dir("extra-argument-dirty");
+    std::fs::write(dir.join("note.md"), "a\u{2014}b").unwrap();
+    let result = scan_tree_with_extra(&dir, "second-root");
+    assert_eq!(result.status, 2);
+    assert!(result.stdout.is_empty(), "{}", result.stdout);
+    assert!(result.stderr.contains("second-root"), "{}", result.stderr);
+}
+
+#[test]
+fn codepoint_scan_refuses_a_root_that_does_not_stand() {
+    // A preservation pin. The scanner's module record states the
+    // refusal as a deliberate difference from the setup scanner it
+    // ports, which exited 0 with zero counts on a root that does
+    // not stand, so this pin passes on the standing code by design
+    // and fails on that answer and on any form that reads a missing
+    // root as an empty tree.
+    let missing = temp_dir("missing-root").join("no-such-tree");
+    let result = scan_tree(&missing);
+    assert_eq!(result.status, 2);
+    assert!(result.stdout.is_empty(), "{}", result.stdout);
+    assert!(result.stderr.contains("cannot read"), "{}", result.stderr);
+    assert!(
+        result.stderr.contains(&missing.display().to_string()),
+        "{}",
+        result.stderr
+    );
 }
