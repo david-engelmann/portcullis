@@ -3250,22 +3250,24 @@ pub fn read_log(log_path: &Path) -> Result<Vec<Value>, LogReadError> {
     let mut records = Vec::new();
     for (index, raw_line) in raw_lines.iter().enumerate() {
         let number = index + 1;
+        let corruption = |detail: String| LogCorruptionError {
+            line_number: number,
+            detail,
+        };
         let line = match std::str::from_utf8(raw_line) {
             Ok(line) => line,
             Err(_) => {
-                return Err(LogReadError::Corruption(LogCorruptionError {
-                    line_number: number,
-                    detail: format!("the record at line {number} does not decode as UTF-8"),
-                }));
+                return Err(LogReadError::Corruption(corruption(format!(
+                    "the record at line {number} does not decode as UTF-8"
+                ))));
             }
         };
         let record = match strict_parse(line) {
             Ok(record) => record,
             Err(_) => {
-                return Err(LogReadError::Corruption(LogCorruptionError {
-                    line_number: number,
-                    detail: format!("the record at line {number} does not parse"),
-                }));
+                return Err(LogReadError::Corruption(corruption(format!(
+                    "the record at line {number} does not parse"
+                ))));
             }
         };
         match validate_decision_record(&record, number) {
