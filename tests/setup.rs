@@ -497,6 +497,7 @@ fn codepoint_scan_fails_loudly_on_undecodable_input() {
     std::fs::write(dir.join("note.md"), b"\xff\xfe not utf-8").unwrap();
     let result = scan_tree(&dir);
     assert_eq!(result.status, 2);
+    assert!(result.stdout.is_empty(), "{}", result.stdout);
     assert!(result.stderr.contains("note.md"));
 }
 

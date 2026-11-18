@@ -1464,6 +1464,7 @@ fn a_torn_final_line_is_reported_at_its_line() {
     drop(handle);
     let result = run_cli(&["log", "--log", log_path.to_str().unwrap()], None);
     assert_eq!(result.status, 1);
+    assert_eq!(result.stdout, "");
     assert!(result.stderr.contains("line 3"), "{}", result.stderr);
 }
 
@@ -1484,6 +1485,7 @@ fn a_spoiled_middle_line_is_reported_at_its_line() {
     portcullis::append_decision(&log_path, &decision).unwrap();
     let result = run_cli(&["log", "--log", log_path.to_str().unwrap()], None);
     assert_eq!(result.status, 1);
+    assert_eq!(result.stdout, "");
     assert!(result.stderr.contains("line 2"), "{}", result.stderr);
 }
 
@@ -1538,6 +1540,7 @@ fn the_log_command_treats_a_missing_log_as_a_caller_error() {
         None,
     );
     assert_eq!(result.status, 2);
+    assert_eq!(result.stdout, "");
 }
 
 // --- the command line ---------------------------------------------------------------
@@ -2158,6 +2161,7 @@ fn an_undecodable_log_line_is_corruption_at_its_line() {
     }
     let result = run_cli(&["log", "--log", log_path.to_str().unwrap()], None);
     assert_eq!(result.status, 1);
+    assert_eq!(result.stdout, "");
     assert!(result.stderr.contains("line 2"), "{}", result.stderr);
 }
 
