@@ -11,6 +11,9 @@
 //! log and compares the bytes against the continued log the
 //! Python implementation produced.
 
+#[allow(dead_code)]
+mod common;
+
 use std::path::{Path, PathBuf};
 
 use portcullis::{append_decision, evaluate, load_policy, read_log, strict_parse, Value};
@@ -137,9 +140,7 @@ const INVENTORY: [(&str, &str, usize); 23] = [
 ];
 
 fn fixtures_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("fixtures")
+    common::root().join("tests").join("fixtures")
 }
 
 fn read_fixture(name: &str) -> Vec<u8> {
@@ -153,13 +154,7 @@ fn parse_fixture(name: &str) -> Value {
 }
 
 fn temp_dir(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "portcullis-fixtures-test-{}-{tag}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
+    common::temp_dir_with("portcullis-fixtures-test", tag)
 }
 
 #[test]
