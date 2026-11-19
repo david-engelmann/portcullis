@@ -1555,7 +1555,14 @@ fn a_complete_final_record_without_its_newline_reads_whole() {
     assert_eq!(canonical(&records[1]), canonical(&decision));
     let result = run_cli(&["log", "--log", log_path.to_str().unwrap()], None);
     assert_eq!(result.status, 0);
-    assert_eq!(result.stdout.lines().count(), 2);
+    let printed: Vec<Value> = result
+        .stdout
+        .lines()
+        .map(|line| strict_parse(line).unwrap())
+        .collect();
+    assert_eq!(printed.len(), 2);
+    assert_eq!(canonical(&printed[0]), canonical(&decision));
+    assert_eq!(canonical(&printed[1]), canonical(&decision));
 }
 #[test]
 fn a_decision_that_cannot_be_appended_is_not_delivered() {
