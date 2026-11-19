@@ -2890,3 +2890,69 @@ fn a_file_rule_matching_the_given_path_with_its_dot_segment_still_allows() {
         &Value::obj(vec![("type", s("rule")), ("rule", s("allow-dotted"))])
     );
 }
+
+#[test]
+fn the_help_option_with_an_inline_value_refuses_at_exit_two() {
+    // The help option takes no value, so an equals form
+    // carrying one is a caller error on the mirrored parser,
+    // which refuses it at exit 2 naming the ignored argument
+    // and printing nothing. The standing code matches the
+    // option's name and prints the help without judging the
+    // inline value, exiting 0 with the help on stdout, so
+    // this pin fails there.
+    let dir = temp_dir("help-inline-value");
+    let log_path = dir.join("audit.jsonl");
+    let result = run_cli(
+        &["check", "--help=x", "--log", log_path.to_str().unwrap()],
+        None,
+    );
+    assert_eq!(result.status, 2);
+    assert_eq!(result.stdout, "");
+    assert!(
+        result
+            .stderr
+            .contains("portcullis: error: argument --help: ignored explicit argument 'x'"),
+        "{}",
+        result.stderr
+    );
+    assert!(!log_path.exists());
+}
+
+#[test]
+fn the_help_option_with_a_prefixed_inline_value_refuses_at_exit_two() {
+    // The unambiguous prefix form of the help option's name
+    // carrying an inline value is the same shape on a second
+    // subcommand, and the mirrored parser refuses it the
+    // same way. The standing code prints the log help and
+    // exits 0, so this pin fails there.
+    let result = run_cli(&["log", "--he=x"], None);
+    assert_eq!(result.status, 2);
+    assert_eq!(result.stdout, "");
+    assert!(
+        result
+            .stderr
+            .contains("portcullis: error: argument --help: ignored explicit argument 'x'"),
+        "{}",
+        result.stderr
+    );
+}
+
+#[test]
+fn the_help_option_with_an_empty_inline_value_refuses_at_exit_two() {
+    // An inline value that stands empty is still an explicit
+    // argument, and the mirrored parser refuses it at exit 2
+    // naming the empty value. A repair that refuses only a
+    // nonempty inline value prints the audit help here and
+    // exits 0, as the standing code does, so this pin fails
+    // on both.
+    let result = run_cli(&["audit", "--help="], None);
+    assert_eq!(result.status, 2);
+    assert_eq!(result.stdout, "");
+    assert!(
+        result
+            .stderr
+            .contains("portcullis: error: argument --help: ignored explicit argument ''"),
+        "{}",
+        result.stderr
+    );
+}

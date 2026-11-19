@@ -440,6 +440,15 @@ fn parse_subcommand(command: &str, args: &[OsString]) -> Result<ParsedArgs, (Str
                 Err(detail) => return Err((detail, 2)),
             };
             if option == "--help" {
+                if let Some(value) = &inline {
+                    return Err((
+                        format!(
+                            "argument --help: ignored explicit argument '{}'",
+                            value.to_string_lossy()
+                        ),
+                        2,
+                    ));
+                }
                 print_help(command, usage);
                 return Err((String::new(), 0));
             }
