@@ -1564,6 +1564,32 @@ fn a_complete_final_record_without_its_newline_reads_whole() {
     assert_eq!(canonical(&printed[0]), canonical(&decision));
     assert_eq!(canonical(&printed[1]), canonical(&decision));
 }
+
+#[test]
+fn an_empty_log_reads_as_no_records() {
+    // Preservation pin, the decision of PC-A67. A log file
+    // that stands and holds no bytes holds no records. The
+    // reader splits the log on its newlines and drops the
+    // empty piece the split leaves behind, so the file
+    // yields zero records, and the log command prints
+    // nothing and exits 0. A reader that refuses the empty
+    // file as corruption at its first line, the form a split
+    // that keeps its empty piece takes, fails this pin, and
+    // so does a reader that answers it with the caller error
+    // of a file that does not stand. The audit of the same
+    // file stands pinned at tests/audit.rs,
+    // an_empty_log_audits_to_a_report_of_zeroes. This guard
+    // passes on the standing code by design.
+    let dir = temp_dir("empty-log");
+    let log_path = dir.join("audit.jsonl");
+    std::fs::write(&log_path, "").unwrap();
+    let records = read_log(&log_path).unwrap();
+    assert_eq!(records.len(), 0);
+    let result = run_cli(&["log", "--log", log_path.to_str().unwrap()], None);
+    assert_eq!(result.status, 0);
+    assert_eq!(result.stdout, "");
+    assert_eq!(result.stderr, "");
+}
 #[test]
 fn a_decision_that_cannot_be_appended_is_not_delivered() {
     let dir = temp_dir("no-append");
