@@ -1490,6 +1490,81 @@ fn a_spoiled_middle_line_is_reported_at_its_line() {
 }
 
 #[test]
+fn an_empty_line_inside_a_log_is_reported_at_its_line() {
+    let dir = temp_dir("empty-line");
+    let log_path = dir.join("audit.jsonl");
+    let decision = decide(&shell_call(&["ls"]), vec![], "allow");
+    portcullis::append_decision(&log_path, &decision).unwrap();
+    let mut handle = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&log_path)
+        .unwrap();
+    handle.write_all(b"\n").unwrap();
+    drop(handle);
+    portcullis::append_decision(&log_path, &decision).unwrap();
+    let result = run_cli(&["log", "--log", log_path.to_str().unwrap()], None);
+    assert_eq!(result.status, 1);
+    assert_eq!(result.stdout, "");
+    assert!(result.stderr.contains("line 2"), "{}", result.stderr);
+}
+
+#[test]
+fn a_blank_final_line_is_reported_at_its_line() {
+    let dir = temp_dir("blank-final-line");
+    let log_path = dir.join("audit.jsonl");
+    let decision = decide(&shell_call(&["ls"]), vec![], "allow");
+    portcullis::append_decision(&log_path, &decision).unwrap();
+    portcullis::append_decision(&log_path, &decision).unwrap();
+    let mut handle = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&log_path)
+        .unwrap();
+    handle.write_all(b"\n").unwrap();
+    drop(handle);
+    let result = run_cli(&["log", "--log", log_path.to_str().unwrap()], None);
+    assert_eq!(result.status, 1);
+    assert_eq!(result.stdout, "");
+    assert!(result.stderr.contains("line 3"), "{}", result.stderr);
+}
+
+#[test]
+fn a_complete_final_record_without_its_newline_reads_whole() {
+    // Preservation pin. The reader splits the log on its
+    // newlines and drops only the empty piece a trailing
+    // newline leaves behind, so a final record that stands
+    // complete without its newline is a line of the log and
+    // reads whole. A reader that refuses an unterminated
+    // final segment as torn, or that drops it silently,
+    // fails this pin, and the torn line pin above holds the
+    // other direction, an incomplete final segment refusing
+    // at its line. This guard passes on the standing code by
+    // design.
+    let dir = temp_dir("whole-final-record");
+    let log_path = dir.join("audit.jsonl");
+    let decision = decide(&shell_call(&["ls"]), vec![], "allow");
+    portcullis::append_decision(&log_path, &decision).unwrap();
+    let line = canonical(&decision);
+    let mut handle = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&log_path)
+        .unwrap();
+    handle.write_all(&line).unwrap();
+    drop(handle);
+    let records = read_log(&log_path).unwrap();
+    assert_eq!(records.len(), 2);
+    assert_eq!(canonical(&records[1]), canonical(&decision));
+    let result = run_cli(&["log", "--log", log_path.to_str().unwrap()], None);
+    assert_eq!(result.status, 0);
+    let printed: Vec<Value> = result
+        .stdout
+        .lines()
+        .map(|line| strict_parse(line).unwrap())
+        .collect();
+    assert_eq!(printed.len(), 2);
+    assert_eq!(canonical(&printed[0]), canonical(&decision));
+    assert_eq!(canonical(&printed[1]), canonical(&decision));
+}
+#[test]
 fn a_decision_that_cannot_be_appended_is_not_delivered() {
     let dir = temp_dir("no-append");
     let policy_path = write_json(&dir.join("policy.json"), &policy_doc(vec![], "deny"));
