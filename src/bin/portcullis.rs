@@ -47,6 +47,14 @@ fn print_line(text: &str) -> std::io::Result<()> {
     stdout.flush()
 }
 
+/// The canonical line text of one record, the form every
+/// command prints. The canonical writer builds a string, so
+/// its bytes are UTF-8 by construction and the conversion
+/// cannot fail.
+fn canonical_line(record: &Value) -> String {
+    String::from_utf8(canonical(record)).unwrap()
+}
+
 fn arg_error(usage: &str, detail: &str) -> i32 {
     eprintln!("{usage}");
     eprintln!("portcullis: error: {detail}");
@@ -239,7 +247,7 @@ fn check(
         ));
         return 2;
     }
-    let line = String::from_utf8(canonical(&decision)).unwrap();
+    let line = canonical_line(&decision);
     if print_line(&line).is_err() {
         fail("the decision could not be printed");
         return 2;
@@ -254,7 +262,7 @@ fn log(log_path: PathBuf) -> i32 {
     match read_log(&log_path) {
         Ok(records) => {
             for record in &records {
-                let line = String::from_utf8(canonical(record)).unwrap();
+                let line = canonical_line(record);
                 if print_line(&line).is_err() {
                     fail("the audit log could not be printed");
                     return 2;
@@ -276,7 +284,7 @@ fn log(log_path: PathBuf) -> i32 {
 fn audit(log_path: PathBuf, sample_size: usize) -> i32 {
     match audit_log(&log_path, sample_size) {
         Ok(report) => {
-            let line = String::from_utf8(canonical(&report)).unwrap();
+            let line = canonical_line(&report);
             if print_line(&line).is_err() {
                 fail("the audit report could not be printed");
                 return 2;
