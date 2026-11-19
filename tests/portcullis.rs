@@ -2982,3 +2982,122 @@ fn the_help_option_with_an_empty_inline_value_refuses_at_exit_two() {
         result.stderr
     );
 }
+
+#[cfg(unix)]
+fn run_cli_with_dead_stdout(arguments: &[&str]) -> CliOutput {
+    // Run the binary with its standard output staged at
+    // /dev/full, whose writes always fail, and its error
+    // stream captured, answering the exit and the error text.
+    let full = std::fs::OpenOptions::new()
+        .write(true)
+        .open("/dev/full")
+        .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_portcullis"))
+        .args(arguments)
+        .current_dir(root())
+        .stdout(Stdio::from(full))
+        .stderr(Stdio::piped())
+        .output()
+        .unwrap();
+    CliOutput {
+        status: output.status.code().unwrap_or(-1),
+        stdout: String::new(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_decision_that_could_not_be_printed_answers_two_and_stands_appended() {
+    // Preservation pin, the decision of PC-A69. The check
+    // command appends its decision and then prints it, and a
+    // failed print answers the decision could not be printed
+    // at exit 2, because a decision that could not be printed
+    // was not delivered even when it was appended. The call is
+    // staged to allow, so a print failure swallowed into the
+    // decision's own exit answers 0 here where the rule
+    // answers 2, and a check that counts the appended record
+    // delivered whatever the print did answers the same 0. A
+    // branch answering 2 without its sentence fails the error
+    // stream assertion. The record stands appended in the
+    // log, the delivery failure being the print's and not the
+    // append's. This guard passes on the standing code by
+    // design.
+    let dir = temp_dir("print-check");
+    let policy_path = write_json(&dir.join("policy.json"), &policy_doc(vec![], "allow"));
+    let call_path = write_json(&dir.join("call.json"), &shell_call(&["ls"]));
+    let log_path = dir.join("audit.jsonl");
+    let result = run_cli_with_dead_stdout(&[
+        "check",
+        "--policy",
+        policy_path.to_str().unwrap(),
+        "--log",
+        log_path.to_str().unwrap(),
+        call_path.to_str().unwrap(),
+    ]);
+    assert_eq!(result.status, 2);
+    assert!(
+        result.stderr.contains("the decision could not be printed"),
+        "{}",
+        result.stderr
+    );
+    let records = read_log(&log_path).unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(field(&records[0], "decision"), &s("allow"));
+}
+
+#[cfg(unix)]
+#[test]
+fn an_audit_log_that_could_not_be_printed_answers_two() {
+    // Preservation pin, the decision of PC-A69. The log
+    // command prints each record through the same checked
+    // print, and a failed print answers the audit log could
+    // not be printed at exit 2. A print failure swallowed
+    // into the command's own exit answers 0 here where the
+    // rule answers 2, and a branch answering 2 without its
+    // sentence fails the error stream assertion. This guard
+    // passes on the standing code by design.
+    let dir = temp_dir("print-log");
+    let log_path = dir.join("audit.jsonl");
+    let decision = decide(&shell_call(&["ls"]), vec![], "allow");
+    portcullis::append_decision(&log_path, &decision).unwrap();
+    let result = run_cli_with_dead_stdout(&["log", "--log", log_path.to_str().unwrap()]);
+    assert_eq!(result.status, 2);
+    assert!(
+        result.stderr.contains("the audit log could not be printed"),
+        "{}",
+        result.stderr
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn an_audit_report_that_could_not_be_printed_answers_two() {
+    // Preservation pin, the decision of PC-A69. The audit
+    // command prints its report through the same checked
+    // print, and a failed print answers the audit report
+    // could not be printed at exit 2. A print failure
+    // swallowed into the command's own exit answers 0 here
+    // where the rule answers 2, and a branch answering 2
+    // without its sentence fails the error stream assertion.
+    // This guard passes on the standing code by design.
+    let dir = temp_dir("print-audit");
+    let log_path = dir.join("audit.jsonl");
+    let decision = decide(&shell_call(&["ls"]), vec![], "allow");
+    portcullis::append_decision(&log_path, &decision).unwrap();
+    let result = run_cli_with_dead_stdout(&[
+        "audit",
+        "--log",
+        log_path.to_str().unwrap(),
+        "--sample",
+        "1",
+    ]);
+    assert_eq!(result.status, 2);
+    assert!(
+        result
+            .stderr
+            .contains("the audit report could not be printed"),
+        "{}",
+        result.stderr
+    );
+}
