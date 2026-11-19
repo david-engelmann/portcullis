@@ -1,11 +1,15 @@
 //! Tests for the admission slice, the judge rule and the
 //! judgment block and the transport seam and the second
-//! decision record format. Every test here is offline. Replies
-//! are hand built in the shapes the reply grammar of the
-//! contract states, and the recorded fixture replay at the end
-//! of the file drives the replies the live window captured.
-//! Every test pins one claim of obligations PC-13 to PC-20 and
-//! can fail for a real reason.
+//! decision record format, and for the referral interior and
+//! the doctrine the gathered populations support. Every test
+//! here is offline. Replies are hand built in the shapes the
+//! reply grammar of the contract states, and the recorded
+//! fixture replay drives the replies the live window captured.
+//! The admission pins hold obligations PC-13 to PC-20, the
+//! interior pins hold obligation PC-26 and the exhibit it
+//! names, and the doctrine pins hold obligations PC-27 to
+//! PC-34 against the recorded corpus. Every test can fail for
+//! a real reason.
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
