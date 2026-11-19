@@ -1143,6 +1143,38 @@ fn a_judge_reply_that_is_not_text_lands_on_the_transport_fallback() {
     assert_eq!(model_field(&decision, "failure"), &s("transport"));
 }
 
+#[test]
+fn a_judge_command_that_answers_and_then_fails_lands_on_the_transport_fallback() {
+    // The command drains the request, prints the whole
+    // allow reply, and then exits with a failure, so a reply
+    // body stands that the library could classify.
+    // Obligation PC-16 names a nonzero exit as a transport
+    // failure with no regard to any body, and the transport
+    // checks the exit before it collects the reply, so the
+    // consultation refuses with the exit sentence and the
+    // referral lands on the transport class. A transport
+    // that classified a standing body first would record
+    // the allow this reply carries instead, and this pin
+    // fails on that form.
+    let request = one_captured_request();
+    let command = format!("cat >/dev/null; printf '%s' '{}'; exit 3", allow_reply());
+    let transport = SubprocessTransport::new(&command);
+    let error = transport.consult(&request).unwrap_err();
+    assert_eq!(error.0, "the judge command exited with a failure");
+    let doc = shell_judge_policy(0.75, "queue");
+    let policy = load_policy(&doc).unwrap();
+    let decision = evaluate_with_transport(
+        Some(&policy),
+        None,
+        &shell_call(&["ls"]),
+        AT,
+        Some(&transport),
+    );
+    assert_eq!(field(&decision, "decision"), &s("escalate"));
+    assert_eq!(model_field(&decision, "verdict"), &Value::Null);
+    assert_eq!(model_field(&decision, "fallback"), &s("transport"));
+    assert_eq!(model_field(&decision, "failure"), &s("transport"));
+}
 // --- the command line ------------------------------------------------------------
 
 struct CliOutput {
