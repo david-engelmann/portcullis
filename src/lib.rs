@@ -1173,18 +1173,13 @@ fn validate_matcher(value: &Value, what: &str, fold: bool) -> Result<Matcher, Po
 
 fn validate_port_matcher(value: &Value, what: &str) -> Result<i64, PolicyError> {
     let pairs = match value.as_object() {
-        Some(pairs) => pairs,
-        None => {
+        Some(pairs) if pairs.len() == 1 && pairs[0].0 == "exact" => pairs,
+        _ => {
             return Err(PolicyError(format!(
                 "{what} is not a port matcher holding one exact port"
             )));
         }
     };
-    if pairs.len() != 1 || pairs[0].0 != "exact" {
-        return Err(PolicyError(format!(
-            "{what} is not a port matcher holding one exact port"
-        )));
-    }
     if !valid_port(&pairs[0].1) {
         return Err(PolicyError(format!(
             "{what} carries a port outside its range"
