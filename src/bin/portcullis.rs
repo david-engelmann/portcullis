@@ -29,11 +29,18 @@ const CHECK_USAGE: &str =
     "usage: portcullis check [-h] --policy POLICY --log LOG [--judge COMMAND] [call]";
 const LOG_USAGE: &str = "usage: portcullis log [-h] --log LOG";
 const AUDIT_USAGE: &str = "usage: portcullis audit [-h] --log LOG --sample SAMPLE";
-const CHECK_HELP: &str = "The judge command is an external program the check command consults for a call the policy refers. It receives the request document on its standard input as one canonical line and answers with the reply body on its standard output, under a timeout of thirty seconds the library fixes. With no judge command configured, every referred call is decided on the no transport fallback.";
+const CHECK_HELP: &str = "The judge command is an external program the check command consults for a call the policy refers. It runs through the system shell, so the value may name a program together with its arguments. It receives the request document on its standard input as one canonical line and answers with the reply body on its standard output, under a timeout of thirty seconds the library fixes. With no judge command configured, every referred call is decided on the no transport fallback.";
 const AUDIT_HELP: &str = "The audit ranks recorded calls by their recorded scores and decides nothing. It reads the audit log whole and prints one report naming the count of each class of record and the sample of the highest ranked allows the named size asks for.";
 
+/// Report one error line on standard error. The write is
+/// fallible and its failure is swallowed, because the error
+/// stream is the channel of last resort: when it cannot be
+/// written, no channel remains to report through, and the exit
+/// code the caller returns still stands, where a panic would
+/// replace it with a code outside the stated vocabulary.
 fn fail(message: &str) {
-    eprintln!("error: {message}");
+    use std::io::Write;
+    let _ = writeln!(std::io::stderr().lock(), "error: {message}");
 }
 
 /// Print one line on stdout and report a failed write to the
@@ -48,21 +55,36 @@ fn print_line(text: &str) -> std::io::Result<()> {
 }
 
 fn arg_error(usage: &str, detail: &str) -> i32 {
-    eprintln!("{usage}");
-    eprintln!("portcullis: error: {detail}");
+    use std::io::Write;
+    let mut stderr = std::io::stderr().lock();
+    let _ = writeln!(stderr, "{usage}");
+    let _ = writeln!(stderr, "portcullis: error: {detail}");
     2
 }
 
 /// Print the help text of one subcommand, its usage line
 /// and, for the check command, the statement of the judge
-/// protocol that stands beside the usage.
-fn print_help(command: &str, usage: &str) {
-    let _ = print_line(&format!("{usage}\n"));
+/// protocol that stands beside the usage. A failed print is
+/// reported to the caller, because help that never arrived
+/// was not delivered and must not be answered as success.
+fn print_help(command: &str, usage: &str) -> std::io::Result<()> {
+    print_line(&format!("{usage}\n"))?;
     if command == "check" {
-        let _ = print_line(CHECK_HELP);
+        print_line(CHECK_HELP)?;
     }
     if command == "audit" {
-        let _ = print_line(AUDIT_HELP);
+        print_line(AUDIT_HELP)?;
+    }
+    Ok(())
+}
+
+/// The outcome of a subcommand's help path, exit 0 with no
+/// error text when the help printed, and the caller error
+/// naming the failed print at exit 2 when it did not.
+fn help_outcome(command: &str, usage: &str) -> Result<ParsedArgs, (String, i32)> {
+    match print_help(command, usage) {
+        Ok(()) => Err((String::new(), 0)),
+        Err(_) => Err(("the help text could not be printed".to_string(), 2)),
     }
 }
 
@@ -250,6 +272,22 @@ fn check(
     }
 }
 
+/// Refuse a log read in the words both the log command and
+/// the audit command print for it, the corruption sentence
+/// at exit 1 and the caller's own words at exit 2.
+fn log_read_refusal(error: LogReadError) -> i32 {
+    match error {
+        LogReadError::Corruption(exc) => {
+            fail(&format!("the audit log is corrupt at {exc}"));
+            1
+        }
+        LogReadError::Caller(exc) => {
+            fail(&exc.0);
+            2
+        }
+    }
+}
+
 fn log(log_path: PathBuf) -> i32 {
     match read_log(&log_path) {
         Ok(records) => {
@@ -262,14 +300,7 @@ fn log(log_path: PathBuf) -> i32 {
             }
             0
         }
-        Err(LogReadError::Corruption(exc)) => {
-            fail(&format!("the audit log is corrupt at {exc}"));
-            1
-        }
-        Err(LogReadError::Caller(exc)) => {
-            fail(&exc.0);
-            2
-        }
+        Err(error) => log_read_refusal(error),
     }
 }
 
@@ -283,14 +314,7 @@ fn audit(log_path: PathBuf, sample_size: usize) -> i32 {
             }
             0
         }
-        Err(LogReadError::Corruption(exc)) => {
-            fail(&format!("the audit log is corrupt at {exc}"));
-            1
-        }
-        Err(LogReadError::Caller(exc)) => {
-            fail(&exc.0);
-            2
-        }
+        Err(error) => log_read_refusal(error),
     }
 }
 
@@ -349,12 +373,71 @@ fn match_long_option<'a>(
     }
 }
 
-fn parse_subcommand(command: &str, args: &[OsString]) -> Result<ParsedArgs, (String, i32)> {
-    let usage = match command {
+/// Tell whether a token standing where an option value is
+/// expected reads as an option rather than as a value, as the
+/// Python parser judges it. The separator reads as an option,
+/// and so does every hyphen led token but three: the bare
+/// hyphen, which names a path by the standing convention; a
+/// token carrying a space, which the Python parser never reads
+/// as an option; and a negative number's complete shape in
+/// ASCII digits, which the Python parser accepts as a value
+/// because no option of this command line looks like a
+/// negative number.
+fn reads_as_option(text: &str) -> bool {
+    if text == "--" {
+        return true;
+    }
+    if !text.starts_with('-') || text == "-" || text.contains(' ') {
+        return false;
+    }
+    !is_negative_number(text)
+}
+
+/// Tell whether a hyphen led token is a negative number's
+/// complete shape: digits with an optional fractional part,
+/// or a decimal point and then digits, in ASCII digits.
+fn is_negative_number(text: &str) -> bool {
+    let rest = &text[1..];
+    let mut parts = rest.splitn(2, '.');
+    let whole = parts.next().unwrap_or("");
+    let digits = |part: &str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit());
+    match parts.next() {
+        None => digits(whole),
+        Some(fraction) => digits(fraction) && (whole.is_empty() || digits(whole)),
+    }
+}
+
+/// Tell whether a hyphen led token standing in option
+/// position is read as a positional by the Python parser.
+/// An option string there carries no space before any
+/// equals sign, the equals form taking its inline value
+/// whole, and a negative number's complete shape is a
+/// positional because no option of this command line looks
+/// like a negative number.
+fn reads_as_positional(text: &str) -> bool {
+    if is_negative_number(text) {
+        return true;
+    }
+    let head = match text.find('=') {
+        Some(at) => &text[..at],
+        None => text,
+    };
+    head.contains(' ')
+}
+
+/// The usage text of one subcommand, the text its argument
+/// errors print. The parser and the top level error path
+/// select it through this one match.
+fn usage_of(command: &str) -> &'static str {
+    match command {
         "check" => CHECK_USAGE,
         "audit" => AUDIT_USAGE,
         _ => LOG_USAGE,
-    };
+    }
+}
+
+fn parse_subcommand(command: &str, args: &[OsString]) -> Result<ParsedArgs, (String, i32)> {
+    let usage = usage_of(command);
     let known: &[&str] = match command {
         "check" => &["--policy", "--log", "--judge", "--help"],
         "audit" => &["--log", "--sample", "--help"],
@@ -378,18 +461,25 @@ fn parse_subcommand(command: &str, args: &[OsString]) -> Result<ParsedArgs, (Str
             continue;
         }
         if !positional_only && (token_text == "-h" || token_text == "--help") {
-            print_help(command, usage);
-            return Err((String::new(), 0));
+            return help_outcome(command, usage);
         }
-        if !positional_only && token_text.starts_with("--") {
+        if !positional_only && token_text.starts_with("--") && !reads_as_positional(&token_text) {
             let (name_token, inline) = split_inline(token);
             let option = match match_long_option(&name_token, &token_text, known) {
                 Ok(option) => option,
                 Err(detail) => return Err((detail, 2)),
             };
             if option == "--help" {
-                print_help(command, usage);
-                return Err((String::new(), 0));
+                if let Some(value) = &inline {
+                    return Err((
+                        format!(
+                            "argument --help: ignored explicit argument '{}'",
+                            value.to_string_lossy()
+                        ),
+                        2,
+                    ));
+                }
+                return help_outcome(command, usage);
             }
             let value = match inline {
                 Some(value) => PathBuf::from(value),
@@ -398,7 +488,7 @@ fn parse_subcommand(command: &str, args: &[OsString]) -> Result<ParsedArgs, (Str
                     match args.get(index) {
                         Some(value) => {
                             let value_text = value.to_string_lossy();
-                            if value_text == "--" || known.contains(&value_text.as_ref()) {
+                            if reads_as_option(value_text.as_ref()) {
                                 return Err((
                                     format!("argument {option}: expected one argument"),
                                     2,
@@ -439,7 +529,11 @@ fn parse_subcommand(command: &str, args: &[OsString]) -> Result<ParsedArgs, (Str
             index += 1;
             continue;
         }
-        if !positional_only && token_text.starts_with('-') && token_text != "-" {
+        if !positional_only
+            && token_text.starts_with('-')
+            && token_text != "-"
+            && !reads_as_positional(&token_text)
+        {
             return Err((format!("unrecognized arguments: {token_text}"), 2));
         }
         if command == "check" && parsed.call.is_none() {
@@ -478,7 +572,10 @@ fn run() -> i32 {
         None => return arg_error(MAIN_USAGE, "the following arguments are required: command"),
     };
     if first == "-h" || first == "--help" {
-        let _ = print_line(MAIN_USAGE);
+        if print_line(MAIN_USAGE).is_err() {
+            fail("the usage text could not be printed");
+            return 2;
+        }
         return 0;
     }
     match first.as_str() {
@@ -501,11 +598,7 @@ fn run() -> i32 {
                 if detail.is_empty() {
                     code
                 } else {
-                    let usage = match first.as_str() {
-                        "check" => CHECK_USAGE,
-                        "audit" => AUDIT_USAGE,
-                        _ => LOG_USAGE,
-                    };
+                    let usage = usage_of(first.as_str());
                     arg_error(usage, &detail)
                 }
             }
