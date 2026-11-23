@@ -962,22 +962,10 @@ fn network_from_url(document: &Value) -> Result<Value, MalformedCall> {
             "a network call carries a url that is not a string".to_string(),
         ));
     }
-    let parsed = match parse_url(url.as_str().unwrap()) {
-        Ok(parsed) => parsed,
-        Err(()) => {
-            return Err(MalformedCall(
-                "a network call carries a url that does not parse".to_string(),
-            ));
-        }
-    };
-    let port = match parsed.port {
-        Ok(port) => port,
-        Err(()) => {
-            return Err(MalformedCall(
-                "a network call carries a url that does not parse".to_string(),
-            ));
-        }
-    };
+    let does_not_parse =
+        || MalformedCall("a network call carries a url that does not parse".to_string());
+    let parsed = parse_url(url.as_str().unwrap()).map_err(|()| does_not_parse())?;
+    let port = parsed.port.map_err(|()| does_not_parse())?;
     if parsed.username.is_some() || parsed.password.is_some() {
         return Err(MalformedCall(
             "a network call carries a url holding userinfo".to_string(),
