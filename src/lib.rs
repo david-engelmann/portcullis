@@ -119,12 +119,40 @@ impl std::fmt::Display for LogCorruptionError {
     }
 }
 
+impl std::error::Error for CallerError {}
+
+impl std::error::Error for PolicyError {}
+
+impl std::error::Error for MalformedCall {}
+
+impl std::error::Error for LogAppendError {}
+
+impl std::error::Error for LogCorruptionError {}
+
 /// A failure of the log command, either a caller error or
 /// corruption at a named line.
 #[derive(Debug)]
 pub enum LogReadError {
     Caller(CallerError),
     Corruption(LogCorruptionError),
+}
+
+impl std::fmt::Display for LogReadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LogReadError::Caller(error) => std::fmt::Display::fmt(error, f),
+            LogReadError::Corruption(error) => std::fmt::Display::fmt(error, f),
+        }
+    }
+}
+
+impl std::error::Error for LogReadError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            LogReadError::Caller(error) => Some(error),
+            LogReadError::Corruption(error) => Some(error),
+        }
+    }
 }
 
 // --- the document model ------------------------------------------------
@@ -693,6 +721,13 @@ fn is_text(value: &Value) -> bool {
 
 // --- call validation -------------------------------------------------------
 
+fn argv_form_ok(argv: &Value) -> bool {
+    match argv.as_array() {
+        Some(items) => !items.is_empty() && items.iter().all(is_text),
+        None => false,
+    }
+}
+
 fn validate_shell(document: &Value) -> Result<Value, MalformedCall> {
     check_keys(
         document,
@@ -702,11 +737,7 @@ fn validate_shell(document: &Value) -> Result<Value, MalformedCall> {
     )
     .map_err(MalformedCall)?;
     let argv = document.get("argv").unwrap();
-    let argv_ok = match argv.as_array() {
-        Some(items) => !items.is_empty() && items.iter().all(is_text),
-        None => false,
-    };
-    if !argv_ok {
+    if !argv_form_ok(argv) {
         return Err(MalformedCall(
             "a shell call carries an argv of one or more strings".to_string(),
         ));
@@ -1297,11 +1328,7 @@ fn validate_substitute(
         "shell" => {
             check_policy_keys(substitute, &["argv", "cwd"], &what)?;
             if let Some(argv) = substitute.get("argv") {
-                let argv_ok = match argv.as_array() {
-                    Some(items) => !items.is_empty() && items.iter().all(is_text),
-                    None => false,
-                };
-                if !argv_ok {
+                if !argv_form_ok(argv) {
                     return Err(PolicyError(format!("{what} carries an argv of no use")));
                 }
                 result.argv = Some(argv.clone());
@@ -1864,9 +1891,11 @@ fn rule_matches(rule: &Rule, call: &Value) -> bool {
             }
             if let Some(path) = &match_.path {
                 let given = text_field(call, "path");
-                let normalized = normpath(given);
-                if !match_text(path, given) && !match_text(path, &normalized) {
-                    return false;
+                if !match_text(path, given) {
+                    let normalized = normpath(given);
+                    if !match_text(path, &normalized) {
+                        return false;
+                    }
                 }
             }
             true
@@ -2083,7 +2112,15 @@ fn evaluate_inner(
                 None => continue,
             }
         }
-        let rewritten = apply_substitute(&call, rule.substitute.as_ref().unwrap(), kind);
+        let substitute = match &rule.substitute {
+            Some(substitute) => substitute,
+            // load_policy refuses a rewrite rule with no
+            // substitute, so this arm only stands for a policy
+            // object a caller built by hand, and there the rule
+            // simply never fires.
+            None => continue,
+        };
+        let rewritten = apply_substitute(&call, substitute, kind);
         let rewritten = match validate_call(&rewritten) {
             Ok(rewritten) => rewritten,
             Err(_) => {
@@ -2140,6 +2177,8 @@ impl std::fmt::Display for TransportError {
     }
 }
 
+impl std::error::Error for TransportError {}
+
 /// The seam a model is consulted through. A transport receives
 /// the exact request document and returns the reply body as
 /// text. Every classification of that text happens in this
@@ -2184,11 +2223,13 @@ impl JudgeTransport for FixtureTransport {
 }
 
 /// A transport that consults an external judge command. The
-/// command receives the request document on its standard input
-/// as one canonical line and answers with the reply body on its
-/// standard output, under the bound JUDGE_TIMEOUT_SECONDS. A
-/// spawn failure, a nonzero exit, a timeout, and an unreadable
-/// reply channel are each a transport failure.
+/// command runs through the system shell, so its value may name
+/// a program together with that program's arguments. It receives
+/// the request document on its standard input as one canonical
+/// line and answers with the reply body on its standard output,
+/// under the bound JUDGE_TIMEOUT_SECONDS. A spawn failure, a
+/// nonzero exit, a timeout, and an unreadable reply channel are
+/// each a transport failure.
 pub struct SubprocessTransport {
     command: String,
 }
@@ -2806,10 +2847,7 @@ fn io_detail(exc: &std::io::Error) -> String {
     exc.to_string()
 }
 
-fn validate_decision_record(
-    record: &Value,
-    line_number: usize,
-) -> Result<Value, LogCorruptionError> {
+fn validate_decision_record(record: &Value, line_number: usize) -> Result<(), LogCorruptionError> {
     let what = format!("the record at line {line_number}");
     let corruption = |detail: String| LogCorruptionError {
         line_number,
@@ -2849,15 +2887,7 @@ fn validate_decision_record(
         return Err(corruption(format!("{what} carries an instant of no use")));
     }
     let digest = record.get("call_digest").unwrap();
-    let digest_ok = match digest.as_str() {
-        Some(text) => {
-            text.starts_with("sha256:")
-                && text.len() == "sha256:".len() + 64
-                && text[7..].chars().all(|c| c.is_ascii_hexdigit())
-        }
-        None => false,
-    };
-    if !digest_ok {
+    if !digest_form_ok(digest) {
         return Err(corruption(format!("{what} carries a digest of no use")));
     }
     let decision_value = record.get("decision").unwrap();
@@ -2971,7 +3001,7 @@ fn validate_decision_record(
             "{what} carries a rewritten call and does not rewrite"
         )));
     }
-    Ok(record.clone())
+    Ok(())
 }
 
 fn digest_form_ok(value: &Value) -> bool {
@@ -2997,7 +3027,7 @@ fn record_number_in_range(value: &Value, low: f64, high: f64) -> bool {
 /// the contract states among the decision and the verdict and
 /// the fallback and the failure, so a record whose fields
 /// disagree is corruption at its line.
-fn validate_model_record(record: &Value, line_number: usize) -> Result<Value, LogCorruptionError> {
+fn validate_model_record(record: &Value, line_number: usize) -> Result<(), LogCorruptionError> {
     let what = format!("the record at line {line_number}");
     let corruption = |detail: String| LogCorruptionError {
         line_number,
@@ -3213,7 +3243,7 @@ fn validate_model_record(record: &Value, line_number: usize) -> Result<Value, Lo
             "{what} carries a fallback and a failure that disagree"
         )));
     }
-    Ok(record.clone())
+    Ok(())
 }
 
 /// Read and verify every record in the audit log at the path.
@@ -3246,26 +3276,28 @@ pub fn read_log(log_path: &Path) -> Result<Vec<Value>, LogReadError> {
     let mut records = Vec::new();
     for (index, raw_line) in raw_lines.iter().enumerate() {
         let number = index + 1;
+        let corruption = |detail: String| LogCorruptionError {
+            line_number: number,
+            detail,
+        };
         let line = match std::str::from_utf8(raw_line) {
             Ok(line) => line,
             Err(_) => {
-                return Err(LogReadError::Corruption(LogCorruptionError {
-                    line_number: number,
-                    detail: format!("the record at line {number} does not decode as UTF-8"),
-                }));
+                return Err(LogReadError::Corruption(corruption(format!(
+                    "the record at line {number} does not decode as UTF-8"
+                ))));
             }
         };
         let record = match strict_parse(line) {
             Ok(record) => record,
             Err(_) => {
-                return Err(LogReadError::Corruption(LogCorruptionError {
-                    line_number: number,
-                    detail: format!("the record at line {number} does not parse"),
-                }));
+                return Err(LogReadError::Corruption(corruption(format!(
+                    "the record at line {number} does not parse"
+                ))));
             }
         };
         match validate_decision_record(&record, number) {
-            Ok(record) => records.push(record),
+            Ok(()) => records.push(record),
             Err(exc) => return Err(LogReadError::Corruption(exc)),
         }
     }
@@ -3300,11 +3332,12 @@ pub fn audit_log(log_path: &Path, sample_size: usize) -> Result<Value, LogReadEr
         )));
     }
     let records = read_log(log_path)?;
+    let line_count = records.len();
     let mut ranked: Vec<(usize, f64, Value, Value)> = Vec::new();
     let mut scored_not_allowed: usize = 0;
     let mut unscored: usize = 0;
     let mut first_format: usize = 0;
-    for (index, record) in records.iter().enumerate() {
+    for (index, record) in records.into_iter().enumerate() {
         let line = index + 1;
         match record.get("format") {
             Some(format) if format == &Value::text(DECISION_FORMAT_2) => {
@@ -3317,7 +3350,7 @@ pub fn audit_log(log_path: &Path, sample_size: usize) -> Result<Value, LogReadEr
                     score,
                 ) {
                     (Some("allow"), Some((score_value, number))) => {
-                        ranked.push((line, number, score_value, record.clone()));
+                        ranked.push((line, number, score_value, record));
                     }
                     (Some("deny") | Some("escalate"), Some(_)) => {
                         scored_not_allowed += 1;
@@ -3353,7 +3386,7 @@ pub fn audit_log(log_path: &Path, sample_size: usize) -> Result<Value, LogReadEr
         (
             "counts",
             Value::obj(vec![
-                ("lines", Value::int(records.len() as i64)),
+                ("lines", Value::int(line_count as i64)),
                 ("ranked", Value::int(ranked_count as i64)),
                 ("scored_not_allowed", Value::int(scored_not_allowed as i64)),
                 ("unscored", Value::int(unscored as i64)),

@@ -1199,6 +1199,9 @@ fn the_cli_help_text_states_the_judge_protocol() {
     assert!(result
         .stdout
         .contains("answers with the reply body on its standard output"));
+    assert!(result
+        .stdout
+        .contains("runs through the system shell, so the value may name a program together with its arguments"));
     assert!(result.stdout.contains("no transport fallback"));
 }
 
