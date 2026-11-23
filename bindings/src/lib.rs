@@ -316,6 +316,20 @@ fn to_value(value: &Bound<'_, PyAny>, depth: usize) -> Result<Value, ConvertErro
     )))
 }
 
+/// Build one Python dictionary from a document's pairs, the
+/// construction value_to_py's object arm and dict_to_py
+/// share, stated once here so the two cannot drift.
+fn dict_from_pairs<'py>(
+    py: Python<'py>,
+    pairs: &[(String, Value)],
+) -> PyResult<Bound<'py, PyDict>> {
+    let dict = PyDict::new(py);
+    for (key, item) in pairs {
+        dict.set_item(key, value_to_py(py, item)?)?;
+    }
+    Ok(dict)
+}
+
 /// One document back as a plain Python value.
 ///
 /// An integer comes back through the int type applied to its
@@ -337,13 +351,7 @@ fn value_to_py(py: Python<'_>, value: &Value) -> PyResult<Py<PyAny>> {
             }
             PyList::new(py, converted)?.into_any().unbind()
         }
-        Value::Object(pairs) => {
-            let dict = PyDict::new(py);
-            for (key, item) in pairs {
-                dict.set_item(key, value_to_py(py, item)?)?;
-            }
-            dict.into_any().unbind()
-        }
+        Value::Object(pairs) => dict_from_pairs(py, pairs)?.into_any().unbind(),
     })
 }
 
@@ -360,11 +368,7 @@ fn dict_to_py(py: Python<'_>, value: &Value) -> PyResult<Py<PyDict>> {
             "the library produced a record that is not an object",
         ));
     };
-    let dict = PyDict::new(py);
-    for (key, item) in pairs {
-        dict.set_item(key, value_to_py(py, item)?)?;
-    }
-    Ok(dict.unbind())
+    Ok(dict_from_pairs(py, pairs)?.unbind())
 }
 
 /// A Python callable standing as a judge transport.
@@ -489,6 +493,22 @@ fn check(
     dict_to_py(py, &decision)
 }
 
+/// Word one log read failure as the exception it raises, the
+/// one wording both read_log and audit_log raise by. A log
+/// that does not stand raises in the caller error class with
+/// the library's own words, and a log with a bad line raises
+/// in the corruption class with the full sentence the command
+/// line tool prints for it, line number included.
+fn log_read_failure(error: LogReadError) -> PyErr {
+    match error {
+        LogReadError::Caller(caller) => CallerError::new_err(caller.0),
+        LogReadError::Corruption(corruption) => LogCorruptionError::new_err(format!(
+            "the audit log is corrupt at line {}, {}",
+            corruption.line_number, corruption.detail
+        )),
+    }
+}
+
 /// Read the records of one audit log back as plain dicts.
 ///
 /// A log that does not stand raises in the caller error class
@@ -499,13 +519,7 @@ fn check(
 fn read_log(py: Python<'_>, log: PathBuf) -> PyResult<Vec<Py<PyDict>>> {
     let records = py
         .detach(|| portcullis_core::read_log(&log))
-        .map_err(|error| match error {
-            LogReadError::Caller(caller) => CallerError::new_err(caller.0),
-            LogReadError::Corruption(corruption) => LogCorruptionError::new_err(format!(
-                "the audit log is corrupt at line {}, {}",
-                corruption.line_number, corruption.detail
-            )),
-        })?;
+        .map_err(log_read_failure)?;
     let mut converted = Vec::with_capacity(records.len());
     for record in &records {
         converted.push(dict_to_py(py, record)?);
@@ -558,13 +572,7 @@ fn audit_log(py: Python<'_>, log: PathBuf, sample: &Bound<'_, PyAny>) -> PyResul
     };
     let report = py
         .detach(|| portcullis_core::audit_log(&log, named))
-        .map_err(|error| match error {
-            LogReadError::Caller(caller) => CallerError::new_err(caller.0),
-            LogReadError::Corruption(corruption) => LogCorruptionError::new_err(format!(
-                "the audit log is corrupt at line {}, {}",
-                corruption.line_number, corruption.detail
-            )),
-        })?;
+        .map_err(log_read_failure)?;
     let dict = dict_to_py(py, &report)?;
     if above_word {
         dict.bind(py).set_item("requested", sample)?;
