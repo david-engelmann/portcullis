@@ -15,28 +15,22 @@ use std::process::Command;
 
 use sha2::{Digest, Sha256};
 
+#[allow(dead_code)]
+mod common;
+use common::root;
+
 const MARKER: &str = "<!-- repo annex below this line -->";
 const GATE_COMMAND: &str = "cargo test";
 const SCAN_COMMAND: &str = "cargo run --bin codepoint_scan";
 const FMT_COMMAND: &str = "cargo fmt --check";
 const CLIPPY_COMMAND: &str = "cargo clippy --all-targets -- -D warnings";
 
-fn root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
-
 fn read(name: &str) -> String {
     std::fs::read_to_string(root().join(name)).unwrap()
 }
 
 fn temp_dir(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "portcullis-setup-test-{}-{tag}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
+    common::temp_dir_with("portcullis-setup-test", tag)
 }
 
 #[test]
@@ -567,4 +561,27 @@ fn codepoint_scan_refuses_a_root_that_does_not_stand() {
         "{}",
         result.stderr
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn the_scanner_answers_a_failed_output_write_with_exit_two() {
+    // The scanner's lines travel through a checked writer, so
+    // an output stream that refuses the write is a scan error
+    // at exit 2. On the standing code the hit line's print
+    // macro panics on the failed write and the process dies
+    // at 101.
+    let root = temp_dir("codepoint-full");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("dash.txt"), "before \u{2014} after\n").unwrap();
+    let full = std::fs::OpenOptions::new()
+        .write(true)
+        .open("/dev/full")
+        .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_codepoint_scan"))
+        .arg(&root)
+        .stdout(std::process::Stdio::from(full))
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
 }

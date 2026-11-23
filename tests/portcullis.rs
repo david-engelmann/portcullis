@@ -9,26 +9,20 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+#[allow(dead_code)]
+mod common;
+use common::{field, root, run_cli, s, write_log_lines, CliOutput};
+
 use portcullis::{
-    canonical, evaluate, load_policy, read_log, strict_parse, LogReadError, Policy, Value,
+    canonical, evaluate, load_policy, read_log, strict_parse, LogReadError, Match, Matcher, Policy,
+    Rule, Value,
 };
 use sha2::{Digest, Sha256};
 
 const AT: &str = "2026-11-02T10:00:00+00:00";
 
-fn root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
-
 fn temp_dir(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("portcullis-test-{}-{tag}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
-}
-
-fn s(text: &str) -> Value {
-    Value::text(text)
+    common::temp_dir_with("portcullis-test", tag)
 }
 
 fn arr(items: Vec<Value>) -> Value {
@@ -117,10 +111,6 @@ fn decide(doc: &Value, rules: Vec<Value>, default: &str) -> Value {
     evaluate(Some(&policy), None, doc, AT)
 }
 
-fn field<'a>(doc: &'a Value, key: &str) -> &'a Value {
-    doc.get(key).unwrap()
-}
-
 fn write_json(path: &Path, document: &Value) -> PathBuf {
     std::fs::write(path, canonical(document)).unwrap();
     path.to_path_buf()
@@ -129,38 +119,6 @@ fn write_json(path: &Path, document: &Value) -> PathBuf {
 fn write_text(path: &Path, text: &str) -> PathBuf {
     std::fs::write(path, text).unwrap();
     path.to_path_buf()
-}
-
-struct CliOutput {
-    status: i32,
-    stdout: String,
-    stderr: String,
-}
-
-fn run_cli(arguments: &[&str], stdin_text: Option<&str>) -> CliOutput {
-    run_cli_bytes(arguments, stdin_text.map(|text| text.as_bytes().to_vec()))
-}
-
-fn run_cli_bytes(arguments: &[&str], stdin_bytes: Option<Vec<u8>>) -> CliOutput {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_portcullis"));
-    command
-        .args(arguments)
-        .current_dir(root())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    if stdin_bytes.is_some() {
-        command.stdin(Stdio::piped());
-    }
-    let mut child = command.spawn().unwrap();
-    if let Some(bytes) = stdin_bytes {
-        child.stdin.take().unwrap().write_all(&bytes).unwrap();
-    }
-    let output = child.wait_with_output().unwrap();
-    CliOutput {
-        status: output.status.code().unwrap_or(-1),
-        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-    }
 }
 
 fn parse_line(text: &str) -> Value {
@@ -1083,6 +1041,7 @@ fn a_call_with_a_nonstandard_constant_is_a_caller_error() {
         None,
     );
     assert_eq!(result.status, 2);
+    assert_eq!(result.stdout, "");
 }
 
 // --- strict reading of policies ------------------------------------------------
@@ -1815,6 +1774,7 @@ fn cli_a_missing_call_file_exits_two() {
         None,
     );
     assert_eq!(result.status, 2);
+    assert_eq!(result.stdout, "");
 }
 
 #[test]
@@ -1825,6 +1785,7 @@ fn cli_bad_arguments_exit_two() {
         None,
     );
     assert_eq!(result.status, 2);
+    assert_eq!(result.stdout, "");
 }
 
 #[test]
@@ -1889,15 +1850,6 @@ fn an_interpreter_call_rewritten_to_a_harmless_call_stays_flagged() {
         &arr(vec![s("echo"), s("hi")])
     );
     assert_eq!(field(&decision, "interpreter"), &Value::Bool(true));
-}
-
-fn write_log_lines(log_path: &Path, records: &[Value]) {
-    let mut text = String::new();
-    for record in records {
-        text.push_str(&String::from_utf8(canonical(record)).unwrap());
-        text.push('\n');
-    }
-    std::fs::write(log_path, text).unwrap();
 }
 
 fn valid_allow_record() -> Value {
@@ -3100,4 +3052,329 @@ fn an_audit_report_that_could_not_be_printed_answers_two() {
         "{}",
         result.stderr
     );
+}
+
+#[test]
+fn a_hand_built_rewrite_rule_without_a_substitute_never_fires() {
+    // load_policy refuses a rewrite rule carrying no
+    // substitute, so this shape stands only for a policy object
+    // a caller built by hand through the public types. The
+    // judge arm of the same pass states the doctrine for that
+    // case, the rule simply never fires, and the rewrite arm
+    // answers the same way. Before the repair this evaluation
+    // panicked on the missing substitute.
+    let policy = Policy {
+        default: "deny".to_string(),
+        rules: vec![Rule {
+            id: "soften-ls".to_string(),
+            kind: "shell".to_string(),
+            action: "rewrite".to_string(),
+            reason: "a reason".to_string(),
+            match_: Match {
+                argv0: Some(Matcher::Exact("ls".to_string())),
+                ..Match::default()
+            },
+            substitute: None,
+        }],
+        judgment: None,
+    };
+    let decision = evaluate(Some(&policy), None, &shell_call(&["ls"]), AT);
+    assert_eq!(field(&decision, "decision"), &s("deny"));
+    assert_eq!(
+        field(&decision, "source"),
+        &Value::obj(vec![("type", s("default"))])
+    );
+    assert_eq!(field(&decision, "rewritten_call"), &Value::Null);
+}
+
+#[test]
+fn evaluation_continues_past_a_hand_built_rewrite_rule_without_a_substitute() {
+    // The companion case to the pin above, named in review.
+    // The incomplete rewrite rule never fires, and evaluation
+    // continues to the next rule rather than breaking to the
+    // default: a matching allow rule standing after it decides
+    // the call. A rewrite arm that stopped the pass at the
+    // incomplete rule would answer the default deny here.
+    let policy = Policy {
+        default: "deny".to_string(),
+        rules: vec![
+            Rule {
+                id: "soften-ls".to_string(),
+                kind: "shell".to_string(),
+                action: "rewrite".to_string(),
+                reason: "a reason".to_string(),
+                match_: Match {
+                    argv0: Some(Matcher::Exact("ls".to_string())),
+                    ..Match::default()
+                },
+                substitute: None,
+            },
+            Rule {
+                id: "allow-ls".to_string(),
+                kind: "shell".to_string(),
+                action: "allow".to_string(),
+                reason: "a reason".to_string(),
+                match_: Match {
+                    argv0: Some(Matcher::Exact("ls".to_string())),
+                    ..Match::default()
+                },
+                substitute: None,
+            },
+        ],
+        judgment: None,
+    };
+    let decision = evaluate(Some(&policy), None, &shell_call(&["ls"]), AT);
+    assert_eq!(field(&decision, "decision"), &s("allow"));
+    assert_eq!(
+        field(&decision, "source"),
+        &Value::obj(vec![("type", s("rule")), ("rule", s("allow-ls"))])
+    );
+    assert_eq!(field(&decision, "rewritten_call"), &Value::Null);
+}
+
+#[cfg(unix)]
+fn run_cli_with_a_full_stream(arguments: &[&str], stream: &str) -> i32 {
+    // Run the binary with one of its streams staged at
+    // /dev/full, whose writes always fail, and answer the exit
+    // code. The pins below hold the exits the error handling
+    // repair promises on a dead stream.
+    let full = std::fs::OpenOptions::new()
+        .write(true)
+        .open("/dev/full")
+        .unwrap();
+    let mut command = Command::new(env!("CARGO_BIN_EXE_portcullis"));
+    command.args(arguments).current_dir(root());
+    if stream == "stdout" {
+        command.stdout(Stdio::from(full));
+    } else {
+        command.stderr(Stdio::from(full));
+    }
+    let output = command.output().unwrap();
+    output.status.code().unwrap_or(-1)
+}
+
+#[cfg(unix)]
+#[test]
+fn a_caller_error_on_a_dead_error_stream_still_exits_two() {
+    // The caller error line travels through the fallible
+    // reporter, so a dead error stream cannot replace the exit
+    // with a panic. On the standing code the reporter's print
+    // macro panics and the process dies at 101.
+    let dir = temp_dir("dead-stderr-caller");
+    let policy_path = write_json(&dir.join("policy.json"), &policy_doc(vec![], "deny"));
+    let log_path = dir.join("audit.jsonl");
+    let missing = dir.join("missing.json");
+    let status = run_cli_with_a_full_stream(
+        &[
+            "check",
+            "--policy",
+            policy_path.to_str().unwrap(),
+            "--log",
+            log_path.to_str().unwrap(),
+            missing.to_str().unwrap(),
+        ],
+        "stderr",
+    );
+    assert_eq!(status, 2);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_corrupt_log_on_a_dead_error_stream_still_exits_one() {
+    let dir = temp_dir("dead-stderr-corrupt");
+    let log_path = dir.join("audit.jsonl");
+    let decision = decide(&shell_call(&["ls"]), vec![], "allow");
+    portcullis::append_decision(&log_path, &decision).unwrap();
+    let mut handle = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&log_path)
+        .unwrap();
+    handle
+        .write_all(b"{\"format\": \"portcullis-decision/1\"}\n")
+        .unwrap();
+    drop(handle);
+    let status =
+        run_cli_with_a_full_stream(&["log", "--log", log_path.to_str().unwrap()], "stderr");
+    assert_eq!(status, 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn an_argument_error_on_a_dead_error_stream_still_exits_two() {
+    let dir = temp_dir("dead-stderr-args");
+    let log_path = dir.join("audit.jsonl");
+    let status =
+        run_cli_with_a_full_stream(&["check", "--log", log_path.to_str().unwrap()], "stderr");
+    assert_eq!(status, 2);
+}
+
+#[cfg(unix)]
+#[test]
+fn subcommand_help_on_a_dead_output_stream_exits_two() {
+    // Help that could not be printed was not delivered, so the
+    // help path answers a caller error instead of success. On
+    // the standing code the failed print is discarded and the
+    // command exits 0.
+    let status = run_cli_with_a_full_stream(&["check", "--help"], "stdout");
+    assert_eq!(status, 2);
+}
+
+#[cfg(unix)]
+#[test]
+fn top_level_help_on_a_dead_output_stream_exits_two() {
+    let status = run_cli_with_a_full_stream(&["--help"], "stdout");
+    assert_eq!(status, 2);
+}
+
+// --- the glob bracket classes ---------------------------------------------------
+//
+// The contract's probe preamble names the bracket pattern as
+// probed fnmatchcase behaviour, a bracket pattern such as [!a]
+// matching one character that is not a, and the matcher's own
+// documentation states the class language: single characters
+// and ranges, a leading exclamation mark negating, a reversed
+// range admitting nothing, and an unclosed bracket read as a
+// literal. No pin staged a bracket pattern before these.
+
+fn glob_path_decision(pattern: &str, path: &str) -> Value {
+    let rules = vec![plain_rule(
+        "class-rule",
+        "file",
+        "allow",
+        Value::obj(vec![("path", matcher("glob", pattern))]),
+    )];
+    decide(&file_call("read", path), rules, "deny")
+}
+
+#[test]
+fn a_glob_class_admits_its_characters_and_refuses_others() {
+    let decision = glob_path_decision("/work/[ab].txt", "/work/a.txt");
+    assert_eq!(field(&decision, "decision"), &s("allow"));
+    let decision = glob_path_decision("/work/[ab].txt", "/work/b.txt");
+    assert_eq!(field(&decision, "decision"), &s("allow"));
+    let decision = glob_path_decision("/work/[ab].txt", "/work/c.txt");
+    assert_eq!(field(&decision, "decision"), &s("deny"));
+}
+
+#[test]
+fn a_glob_range_admits_its_ends_and_refuses_past_the_top() {
+    let decision = glob_path_decision("/work/[a-c].txt", "/work/a.txt");
+    assert_eq!(field(&decision, "decision"), &s("allow"));
+    let decision = glob_path_decision("/work/[a-c].txt", "/work/c.txt");
+    assert_eq!(field(&decision, "decision"), &s("allow"));
+    let decision = glob_path_decision("/work/[a-c].txt", "/work/d.txt");
+    assert_eq!(field(&decision, "decision"), &s("deny"));
+}
+
+#[test]
+fn a_negated_glob_class_refuses_its_character_and_admits_another() {
+    let decision = glob_path_decision("/work/[!a].txt", "/work/a.txt");
+    assert_eq!(field(&decision, "decision"), &s("deny"));
+    let decision = glob_path_decision("/work/[!a].txt", "/work/b.txt");
+    assert_eq!(field(&decision, "decision"), &s("allow"));
+}
+
+#[test]
+fn a_reversed_glob_range_admits_nothing() {
+    let decision = glob_path_decision("/work/[c-a].txt", "/work/a.txt");
+    assert_eq!(field(&decision, "decision"), &s("deny"));
+    let decision = glob_path_decision("/work/[c-a].txt", "/work/b.txt");
+    assert_eq!(field(&decision, "decision"), &s("deny"));
+    let decision = glob_path_decision("/work/[c-a].txt", "/work/c.txt");
+    assert_eq!(field(&decision, "decision"), &s("deny"));
+}
+
+#[test]
+fn an_unclosed_glob_bracket_matches_the_literal_bracket() {
+    let decision = glob_path_decision("/work/[a.txt", "/work/[a.txt");
+    assert_eq!(field(&decision, "decision"), &s("allow"));
+    let decision = glob_path_decision("/work/[a.txt", "/work/a.txt");
+    assert_eq!(field(&decision, "decision"), &s("deny"));
+}
+
+// --- the canonical float text at its edges --------------------------------------
+//
+// python_float_text renders a float in the canonical writer in
+// Python repr form, fixed notation inside its stated exponent
+// range and exponent notation outside it. Every float the
+// recorded corpus carries stands in the fixed range, so these
+// pins stage the edges by hand.
+
+#[test]
+fn a_float_at_the_top_of_the_fixed_range_renders_in_fixed_form() {
+    let value = strict_parse("1e15").unwrap();
+    assert_eq!(
+        String::from_utf8(canonical(&value)).unwrap(),
+        "1000000000000000.0"
+    );
+}
+
+#[test]
+fn a_float_past_the_fixed_range_renders_in_exponent_form() {
+    let value = strict_parse("1e16").unwrap();
+    assert_eq!(String::from_utf8(canonical(&value)).unwrap(), "1e+16");
+}
+
+#[test]
+fn a_small_float_below_the_fixed_range_renders_in_exponent_form() {
+    let value = strict_parse("1e-5").unwrap();
+    assert_eq!(String::from_utf8(canonical(&value)).unwrap(), "1e-05");
+}
+
+#[test]
+fn a_float_at_the_bottom_of_the_fixed_range_renders_in_fixed_form() {
+    let value = strict_parse("0.0001").unwrap();
+    assert_eq!(String::from_utf8(canonical(&value)).unwrap(), "0.0001");
+}
+
+#[test]
+fn a_negative_zero_float_renders_with_its_sign() {
+    let value = strict_parse("-0.0").unwrap();
+    assert_eq!(String::from_utf8(canonical(&value)).unwrap(), "-0.0");
+}
+
+// --- the printed instant's shape --------------------------------------------------
+//
+// Every decision the command line prints carries its instant
+// under at, generated by the binary's own calendar arithmetic.
+// The reader checks the field only as text, so this pin holds
+// the shape itself: ranges and separators only, never a value,
+// so it cannot flake on a clock boundary.
+
+#[test]
+fn the_printed_decision_carries_an_instant_in_the_cli_shape() {
+    let dir = temp_dir("instant-shape");
+    let policy_path = write_json(&dir.join("policy.json"), &policy_doc(vec![], "allow"));
+    let call_path = write_json(&dir.join("call.json"), &shell_call(&["ls"]));
+    let result = run_cli(
+        &[
+            "check",
+            "--policy",
+            policy_path.to_str().unwrap(),
+            "--log",
+            dir.join("audit.jsonl").to_str().unwrap(),
+            call_path.to_str().unwrap(),
+        ],
+        None,
+    );
+    assert_eq!(result.status, 0);
+    let decision = parse_line(&result.stdout);
+    let at = field(&decision, "at").as_str().unwrap();
+    assert!(at.ends_with("+00:00"), "{at}");
+    let mut date = at[..10].split('-');
+    let year = date.next().unwrap();
+    assert_eq!(year.len(), 4, "{at}");
+    assert!(year.bytes().all(|byte| byte.is_ascii_digit()), "{at}");
+    let month: u32 = date.next().unwrap().parse().unwrap();
+    assert!((1..=12).contains(&month), "{at}");
+    let day: u32 = date.next().unwrap().parse().unwrap();
+    assert!((1..=31).contains(&day), "{at}");
+    assert_eq!(&at[10..11], "T", "{at}");
+    let mut clock = at[11..19].split(':');
+    let hour: u32 = clock.next().unwrap().parse().unwrap();
+    assert!(hour <= 23, "{at}");
+    let minute: u32 = clock.next().unwrap().parse().unwrap();
+    assert!(minute <= 59, "{at}");
+    let second: u32 = clock.next().unwrap().parse().unwrap();
+    assert!(second <= 59, "{at}");
 }

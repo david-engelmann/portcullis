@@ -97,11 +97,12 @@ fn collect(root: &Path, out: &mut Vec<PathBuf>) -> Result<(), ScanError> {
     Ok(())
 }
 
-fn scan(root: &Path) -> Result<(usize, usize), ScanError> {
+fn scan(root: &Path) -> Result<(usize, usize, String), ScanError> {
     let mut files = Vec::new();
     collect(root, &mut files)?;
     let mut em_count = 0;
     let mut en_count = 0;
+    let mut report = String::new();
     for path in &files {
         let bytes = std::fs::read(path)
             .map_err(|err| ScanError(format!("cannot read {}, {err}", path.display())))?;
@@ -111,12 +112,37 @@ fn scan(root: &Path) -> Result<(usize, usize), ScanError> {
         let file_em = text.matches(EM_DASH).count();
         let file_en = text.matches(EN_DASH).count();
         if file_em > 0 || file_en > 0 {
-            println!("{}: em dash {file_em}, en dash {file_en}", path.display());
+            report.push_str(&format!(
+                "{}: em dash {file_em}, en dash {file_en}\n",
+                path.display()
+            ));
         }
         em_count += file_em;
         en_count += file_en;
     }
-    Ok((em_count, en_count))
+    Ok((em_count, en_count, report))
+}
+
+/// Write the scan's whole output once through a checked
+/// writer over a locked stdout. A failed write is a scan
+/// error in the family of the standing cannot read and
+/// cannot decode sentences, because a scan whose counts
+/// never arrived has not reported.
+fn print_output(text: &str) -> Result<(), ScanError> {
+    use std::io::Write;
+    let mut stdout = std::io::stdout().lock();
+    stdout
+        .write_all(text.as_bytes())
+        .and_then(|()| stdout.flush())
+        .map_err(|err| ScanError(format!("cannot write the scan output, {err}")))
+}
+
+/// Write one line on standard error, fallibly. The error
+/// stream is the channel of last resort: when it cannot be
+/// written, the exit code carries what the line cannot.
+fn print_error(text: &str) {
+    use std::io::Write;
+    let _ = writeln!(std::io::stderr().lock(), "{text}");
 }
 
 fn main() -> ExitCode {
@@ -132,9 +158,13 @@ fn main() -> ExitCode {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."));
     match scan(&root) {
-        Ok((em_count, en_count)) => {
-            println!("em dash U+2014 count {em_count}");
-            println!("en dash U+2013 count {en_count}");
+        Ok((em_count, en_count, mut report)) => {
+            report.push_str(&format!("em dash U+2014 count {em_count}\n"));
+            report.push_str(&format!("en dash U+2013 count {en_count}\n"));
+            if let Err(ScanError(message)) = print_output(&report) {
+                print_error(&format!("scan error, {message}"));
+                return ExitCode::from(2);
+            }
             if em_count > 0 || en_count > 0 {
                 ExitCode::from(1)
             } else {
@@ -142,7 +172,7 @@ fn main() -> ExitCode {
             }
         }
         Err(ScanError(message)) => {
-            eprintln!("scan error, {message}");
+            print_error(&format!("scan error, {message}"));
             ExitCode::from(2)
         }
     }

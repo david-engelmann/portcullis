@@ -251,6 +251,20 @@ fn key_text(key: &Bound<'_, PyAny>) -> Result<String, ConvertError> {
     }
 }
 
+/// The items of one Python sequence, a list or a tuple, as
+/// one document array, each item converted at the depth
+/// below the sequence itself.
+fn sequence_value<'py, I>(items: I, len: usize, depth: usize) -> Result<Value, ConvertError>
+where
+    I: Iterator<Item = Bound<'py, PyAny>>,
+{
+    let mut converted = Vec::with_capacity(len);
+    for item in items {
+        converted.push(to_value(&item, depth + 1)?);
+    }
+    Ok(Value::Array(converted))
+}
+
 /// One Python value as a document in the library's model.
 ///
 /// The depth bound mirrors the reader's, and it is also what
@@ -290,18 +304,10 @@ fn to_value(value: &Bound<'_, PyAny>, depth: usize) -> Result<Value, ConvertErro
         };
     }
     if let Ok(list) = value.cast::<PyList>() {
-        let mut items = Vec::with_capacity(list.len());
-        for item in list.iter() {
-            items.push(to_value(&item, depth + 1)?);
-        }
-        return Ok(Value::Array(items));
+        return sequence_value(list.iter(), list.len(), depth);
     }
     if let Ok(tuple) = value.cast::<PyTuple>() {
-        let mut items = Vec::with_capacity(tuple.len());
-        for item in tuple.iter() {
-            items.push(to_value(&item, depth + 1)?);
-        }
-        return Ok(Value::Array(items));
+        return sequence_value(tuple.iter(), tuple.len(), depth);
     }
     if let Ok(dict) = value.cast::<PyDict>() {
         let mut pairs = Vec::with_capacity(dict.len());
@@ -493,6 +499,22 @@ fn check(
     dict_to_py(py, &decision)
 }
 
+/// Word one log read failure as the exception it raises, the
+/// one wording both read_log and audit_log raise by. A log
+/// that does not stand raises in the caller error class with
+/// the library's own words, and a log with a bad line raises
+/// in the corruption class with the full sentence the command
+/// line tool prints for it, line number included.
+fn log_read_failure(error: LogReadError) -> PyErr {
+    match error {
+        LogReadError::Caller(caller) => CallerError::new_err(caller.0),
+        LogReadError::Corruption(corruption) => LogCorruptionError::new_err(format!(
+            "the audit log is corrupt at line {}, {}",
+            corruption.line_number, corruption.detail
+        )),
+    }
+}
+
 /// Read the records of one audit log back as plain dicts.
 ///
 /// A log that does not stand raises in the caller error class
@@ -503,13 +525,7 @@ fn check(
 fn read_log(py: Python<'_>, log: PathBuf) -> PyResult<Vec<Py<PyDict>>> {
     let records = py
         .detach(|| portcullis_core::read_log(&log))
-        .map_err(|error| match error {
-            LogReadError::Caller(caller) => CallerError::new_err(caller.0),
-            LogReadError::Corruption(corruption) => LogCorruptionError::new_err(format!(
-                "the audit log is corrupt at line {}, {}",
-                corruption.line_number, corruption.detail
-            )),
-        })?;
+        .map_err(log_read_failure)?;
     let mut converted = Vec::with_capacity(records.len());
     for record in &records {
         converted.push(dict_to_py(py, record)?);
@@ -562,13 +578,7 @@ fn audit_log(py: Python<'_>, log: PathBuf, sample: &Bound<'_, PyAny>) -> PyResul
     };
     let report = py
         .detach(|| portcullis_core::audit_log(&log, named))
-        .map_err(|error| match error {
-            LogReadError::Caller(caller) => CallerError::new_err(caller.0),
-            LogReadError::Corruption(corruption) => LogCorruptionError::new_err(format!(
-                "the audit log is corrupt at line {}, {}",
-                corruption.line_number, corruption.detail
-            )),
-        })?;
+        .map_err(log_read_failure)?;
     let dict = dict_to_py(py, &report)?;
     if above_word {
         dict.bind(py).set_item("requested", sample)?;
