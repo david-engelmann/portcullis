@@ -29,7 +29,7 @@ const CHECK_USAGE: &str =
     "usage: portcullis check [-h] --policy POLICY --log LOG [--judge COMMAND] [call]";
 const LOG_USAGE: &str = "usage: portcullis log [-h] --log LOG";
 const AUDIT_USAGE: &str = "usage: portcullis audit [-h] --log LOG --sample SAMPLE";
-const CHECK_HELP: &str = "The judge command is an external program the check command consults for a call the policy refers. It receives the request document on its standard input as one canonical line and answers with the reply body on its standard output, under a timeout of thirty seconds the library fixes. With no judge command configured, every referred call is decided on the no transport fallback.";
+const CHECK_HELP: &str = "The judge command is an external program the check command consults for a call the policy refers. It runs through the system shell, so the value may name a program together with its arguments. It receives the request document on its standard input as one canonical line and answers with the reply body on its standard output, under a timeout of thirty seconds the library fixes. With no judge command configured, every referred call is decided on the no transport fallback.";
 const AUDIT_HELP: &str = "The audit ranks recorded calls by their recorded scores and decides nothing. It reads the audit log whole and prints one report naming the count of each class of record and the sample of the highest ranked allows the named size asks for.";
 
 fn fail(message: &str) {
@@ -349,6 +349,58 @@ fn match_long_option<'a>(
     }
 }
 
+/// Tell whether a token standing where an option value is
+/// expected reads as an option rather than as a value, as the
+/// Python parser judges it. The separator reads as an option,
+/// and so does every hyphen led token but three: the bare
+/// hyphen, which names a path by the standing convention; a
+/// token carrying a space, which the Python parser never reads
+/// as an option; and a negative number's complete shape in
+/// ASCII digits, which the Python parser accepts as a value
+/// because no option of this command line looks like a
+/// negative number.
+fn reads_as_option(text: &str) -> bool {
+    if text == "--" {
+        return true;
+    }
+    if !text.starts_with('-') || text == "-" || text.contains(' ') {
+        return false;
+    }
+    !is_negative_number(text)
+}
+
+/// Tell whether a hyphen led token is a negative number's
+/// complete shape: digits with an optional fractional part,
+/// or a decimal point and then digits, in ASCII digits.
+fn is_negative_number(text: &str) -> bool {
+    let rest = &text[1..];
+    let mut parts = rest.splitn(2, '.');
+    let whole = parts.next().unwrap_or("");
+    let digits = |part: &str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit());
+    match parts.next() {
+        None => digits(whole),
+        Some(fraction) => digits(fraction) && (whole.is_empty() || digits(whole)),
+    }
+}
+
+/// Tell whether a hyphen led token standing in option
+/// position is read as a positional by the Python parser.
+/// An option string there carries no space before any
+/// equals sign, the equals form taking its inline value
+/// whole, and a negative number's complete shape is a
+/// positional because no option of this command line looks
+/// like a negative number.
+fn reads_as_positional(text: &str) -> bool {
+    if is_negative_number(text) {
+        return true;
+    }
+    let head = match text.find('=') {
+        Some(at) => &text[..at],
+        None => text,
+    };
+    head.contains(' ')
+}
+
 fn parse_subcommand(command: &str, args: &[OsString]) -> Result<ParsedArgs, (String, i32)> {
     let usage = match command {
         "check" => CHECK_USAGE,
@@ -381,13 +433,22 @@ fn parse_subcommand(command: &str, args: &[OsString]) -> Result<ParsedArgs, (Str
             print_help(command, usage);
             return Err((String::new(), 0));
         }
-        if !positional_only && token_text.starts_with("--") {
+        if !positional_only && token_text.starts_with("--") && !reads_as_positional(&token_text) {
             let (name_token, inline) = split_inline(token);
             let option = match match_long_option(&name_token, &token_text, known) {
                 Ok(option) => option,
                 Err(detail) => return Err((detail, 2)),
             };
             if option == "--help" {
+                if let Some(value) = &inline {
+                    return Err((
+                        format!(
+                            "argument --help: ignored explicit argument '{}'",
+                            value.to_string_lossy()
+                        ),
+                        2,
+                    ));
+                }
                 print_help(command, usage);
                 return Err((String::new(), 0));
             }
@@ -396,7 +457,16 @@ fn parse_subcommand(command: &str, args: &[OsString]) -> Result<ParsedArgs, (Str
                 None => {
                     index += 1;
                     match args.get(index) {
-                        Some(value) => PathBuf::from(value),
+                        Some(value) => {
+                            let value_text = value.to_string_lossy();
+                            if reads_as_option(value_text.as_ref()) {
+                                return Err((
+                                    format!("argument {option}: expected one argument"),
+                                    2,
+                                ));
+                            }
+                            PathBuf::from(value)
+                        }
                         None => {
                             return Err((format!("argument {option}: expected one argument"), 2));
                         }
@@ -430,7 +500,11 @@ fn parse_subcommand(command: &str, args: &[OsString]) -> Result<ParsedArgs, (Str
             index += 1;
             continue;
         }
-        if !positional_only && token_text.starts_with('-') && token_text != "-" {
+        if !positional_only
+            && token_text.starts_with('-')
+            && token_text != "-"
+            && !reads_as_positional(&token_text)
+        {
             return Err((format!("unrecognized arguments: {token_text}"), 2));
         }
         if command == "check" && parsed.call.is_none() {

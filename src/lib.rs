@@ -1892,9 +1892,11 @@ fn rule_matches(rule: &Rule, call: &Value) -> bool {
             }
             if let Some(path) = &match_.path {
                 let given = text_field(call, "path");
-                let normalized = normpath(given);
-                if !match_text(path, given) && !match_text(path, &normalized) {
-                    return false;
+                if !match_text(path, given) {
+                    let normalized = normpath(given);
+                    if !match_text(path, &normalized) {
+                        return false;
+                    }
                 }
             }
             true
@@ -2214,11 +2216,13 @@ impl JudgeTransport for FixtureTransport {
 }
 
 /// A transport that consults an external judge command. The
-/// command receives the request document on its standard input
-/// as one canonical line and answers with the reply body on its
-/// standard output, under the bound JUDGE_TIMEOUT_SECONDS. A
-/// spawn failure, a nonzero exit, a timeout, and an unreadable
-/// reply channel are each a transport failure.
+/// command runs through the system shell, so its value may name
+/// a program together with that program's arguments. It receives
+/// the request document on its standard input as one canonical
+/// line and answers with the reply body on its standard output,
+/// under the bound JUDGE_TIMEOUT_SECONDS. A spawn failure, a
+/// nonzero exit, a timeout, and an unreadable reply channel are
+/// each a transport failure.
 pub struct SubprocessTransport {
     command: String,
 }
@@ -3276,22 +3280,24 @@ pub fn read_log(log_path: &Path) -> Result<Vec<Value>, LogReadError> {
     let mut records = Vec::new();
     for (index, raw_line) in raw_lines.iter().enumerate() {
         let number = index + 1;
+        let corruption = |detail: String| LogCorruptionError {
+            line_number: number,
+            detail,
+        };
         let line = match std::str::from_utf8(raw_line) {
             Ok(line) => line,
             Err(_) => {
-                return Err(LogReadError::Corruption(LogCorruptionError {
-                    line_number: number,
-                    detail: format!("the record at line {number} does not decode as UTF-8"),
-                }));
+                return Err(LogReadError::Corruption(corruption(format!(
+                    "the record at line {number} does not decode as UTF-8"
+                ))));
             }
         };
         let record = match strict_parse(line) {
             Ok(record) => record,
             Err(_) => {
-                return Err(LogReadError::Corruption(LogCorruptionError {
-                    line_number: number,
-                    detail: format!("the record at line {number} does not parse"),
-                }));
+                return Err(LogReadError::Corruption(corruption(format!(
+                    "the record at line {number} does not parse"
+                ))));
             }
         };
         match validate_decision_record(&record, number) {
