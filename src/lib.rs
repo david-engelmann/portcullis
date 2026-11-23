@@ -2766,12 +2766,12 @@ fn judge_decision(
 ///
 /// The lock is verified as the file standing at the log path.
 /// After the lock is taken its device and inode are checked
-/// against the path, with a bounded retry while the path
-/// settles, and the identity is checked again immediately
-/// before the line is written. An append whose held lock is not
-/// the file at the path fails instead of writing into an
-/// unlinked file no reader will ever see, and the decision it
-/// carried is not delivered.
+/// against the path, once on each attempt, with a bounded
+/// retry while the path settles, and the line is written on
+/// the attempt whose check passes. An append whose held lock
+/// is not the file at the path fails instead of writing into
+/// an unlinked file no reader will ever see, and the decision
+/// it carried is not delivered.
 pub fn append_decision(log_path: &Path, decision: &Value) -> Result<(), LogAppendError> {
     let mut line = canonical(decision);
     line.push(b'\n');
