@@ -2840,10 +2840,7 @@ fn io_detail(exc: &std::io::Error) -> String {
     exc.to_string()
 }
 
-fn validate_decision_record(
-    record: &Value,
-    line_number: usize,
-) -> Result<Value, LogCorruptionError> {
+fn validate_decision_record(record: &Value, line_number: usize) -> Result<(), LogCorruptionError> {
     let what = format!("the record at line {line_number}");
     let corruption = |detail: String| LogCorruptionError {
         line_number,
@@ -3005,7 +3002,7 @@ fn validate_decision_record(
             "{what} carries a rewritten call and does not rewrite"
         )));
     }
-    Ok(record.clone())
+    Ok(())
 }
 
 fn digest_form_ok(value: &Value) -> bool {
@@ -3031,7 +3028,7 @@ fn record_number_in_range(value: &Value, low: f64, high: f64) -> bool {
 /// the contract states among the decision and the verdict and
 /// the fallback and the failure, so a record whose fields
 /// disagree is corruption at its line.
-fn validate_model_record(record: &Value, line_number: usize) -> Result<Value, LogCorruptionError> {
+fn validate_model_record(record: &Value, line_number: usize) -> Result<(), LogCorruptionError> {
     let what = format!("the record at line {line_number}");
     let corruption = |detail: String| LogCorruptionError {
         line_number,
@@ -3247,7 +3244,7 @@ fn validate_model_record(record: &Value, line_number: usize) -> Result<Value, Lo
             "{what} carries a fallback and a failure that disagree"
         )));
     }
-    Ok(record.clone())
+    Ok(())
 }
 
 /// Read and verify every record in the audit log at the path.
@@ -3301,7 +3298,7 @@ pub fn read_log(log_path: &Path) -> Result<Vec<Value>, LogReadError> {
             }
         };
         match validate_decision_record(&record, number) {
-            Ok(record) => records.push(record),
+            Ok(()) => records.push(record),
             Err(exc) => return Err(LogReadError::Corruption(exc)),
         }
     }
@@ -3336,11 +3333,12 @@ pub fn audit_log(log_path: &Path, sample_size: usize) -> Result<Value, LogReadEr
         )));
     }
     let records = read_log(log_path)?;
+    let line_count = records.len();
     let mut ranked: Vec<(usize, f64, Value, Value)> = Vec::new();
     let mut scored_not_allowed: usize = 0;
     let mut unscored: usize = 0;
     let mut first_format: usize = 0;
-    for (index, record) in records.iter().enumerate() {
+    for (index, record) in records.into_iter().enumerate() {
         let line = index + 1;
         match record.get("format") {
             Some(format) if format == &Value::text(DECISION_FORMAT_2) => {
@@ -3353,7 +3351,7 @@ pub fn audit_log(log_path: &Path, sample_size: usize) -> Result<Value, LogReadEr
                     score,
                 ) {
                     (Some("allow"), Some((score_value, number))) => {
-                        ranked.push((line, number, score_value, record.clone()));
+                        ranked.push((line, number, score_value, record));
                     }
                     (Some("deny") | Some("escalate"), Some(_)) => {
                         scored_not_allowed += 1;
@@ -3389,7 +3387,7 @@ pub fn audit_log(log_path: &Path, sample_size: usize) -> Result<Value, LogReadEr
         (
             "counts",
             Value::obj(vec![
-                ("lines", Value::int(records.len() as i64)),
+                ("lines", Value::int(line_count as i64)),
                 ("ranked", Value::int(ranked_count as i64)),
                 ("scored_not_allowed", Value::int(scored_not_allowed as i64)),
                 ("unscored", Value::int(unscored as i64)),
