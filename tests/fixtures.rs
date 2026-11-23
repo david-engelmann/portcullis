@@ -237,5 +237,40 @@ fn a_rust_append_continues_the_python_log_byte_for_byte() {
 fn the_fixture_paths_are_relative_in_the_manifest() {
     let manifest = std::fs::read_to_string(fixtures_dir().join("MANIFEST.md")).unwrap();
     assert!(!manifest.contains("/home/"));
-    assert!(!Path::new("tests/fixtures/MANIFEST.md").is_absolute());
+    for (name, _, _) in manifest_inventory(&manifest) {
+        assert!(!Path::new(name).is_absolute(), "{name}");
+    }
+}
+
+/// The inventory lines of the fixtures MANIFEST, parsed as
+/// (name, sha256, length) triples in the order they stand.
+fn manifest_inventory(manifest: &str) -> Vec<(&str, &str, usize)> {
+    let mut named = Vec::new();
+    for line in manifest.lines() {
+        let Some(rest) = line.strip_prefix("- ") else {
+            continue;
+        };
+        let mut parts = rest.split(", ");
+        let name = parts.next().unwrap();
+        let hash = parts.next().unwrap().strip_prefix("sha256 ").unwrap();
+        let length: usize = parts
+            .next()
+            .unwrap()
+            .strip_suffix(" bytes")
+            .unwrap()
+            .parse()
+            .unwrap();
+        named.push((name, hash, length));
+    }
+    named
+}
+
+#[test]
+fn the_manifest_inventory_agrees_with_the_checked_inventory() {
+    let manifest = std::fs::read_to_string(fixtures_dir().join("MANIFEST.md")).unwrap();
+    let named = manifest_inventory(&manifest);
+    assert_eq!(named.len(), INVENTORY.len());
+    for (recorded, checked) in named.iter().zip(INVENTORY.iter()) {
+        assert_eq!(recorded, checked);
+    }
 }
