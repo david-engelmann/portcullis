@@ -316,6 +316,20 @@ fn to_value(value: &Bound<'_, PyAny>, depth: usize) -> Result<Value, ConvertErro
     )))
 }
 
+/// Build one Python dictionary from a document's pairs, the
+/// construction value_to_py's object arm and dict_to_py
+/// share, stated once here so the two cannot drift.
+fn dict_from_pairs<'py>(
+    py: Python<'py>,
+    pairs: &[(String, Value)],
+) -> PyResult<Bound<'py, PyDict>> {
+    let dict = PyDict::new(py);
+    for (key, item) in pairs {
+        dict.set_item(key, value_to_py(py, item)?)?;
+    }
+    Ok(dict)
+}
+
 /// One document back as a plain Python value.
 ///
 /// An integer comes back through the int type applied to its
@@ -337,13 +351,7 @@ fn value_to_py(py: Python<'_>, value: &Value) -> PyResult<Py<PyAny>> {
             }
             PyList::new(py, converted)?.into_any().unbind()
         }
-        Value::Object(pairs) => {
-            let dict = PyDict::new(py);
-            for (key, item) in pairs {
-                dict.set_item(key, value_to_py(py, item)?)?;
-            }
-            dict.into_any().unbind()
-        }
+        Value::Object(pairs) => dict_from_pairs(py, pairs)?.into_any().unbind(),
     })
 }
 
@@ -360,11 +368,7 @@ fn dict_to_py(py: Python<'_>, value: &Value) -> PyResult<Py<PyDict>> {
             "the library produced a record that is not an object",
         ));
     };
-    let dict = PyDict::new(py);
-    for (key, item) in pairs {
-        dict.set_item(key, value_to_py(py, item)?)?;
-    }
-    Ok(dict.unbind())
+    Ok(dict_from_pairs(py, pairs)?.unbind())
 }
 
 /// A Python callable standing as a judge transport.
