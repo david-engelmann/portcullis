@@ -3378,3 +3378,48 @@ fn the_printed_decision_carries_an_instant_in_the_cli_shape() {
     let second: u32 = clock.next().unwrap().parse().unwrap();
     assert!(second <= 59, "{at}");
 }
+
+#[test]
+fn a_port_matcher_of_the_wrong_shape_names_itself_in_the_refusal() {
+    // Preservation pin, the decision of PC-A73. Both wrong
+    // shapes of a port matcher, a value that is not an object
+    // and an object holding a key other than exact, draw the
+    // one sentence from validate_port_matcher's one seat, and
+    // this pin passes on the standing code by design, where
+    // the refusal stood built at two arms. It fails on a
+    // merged guard that admits either wrong shape, which
+    // loads the policy here, and on a restated sentence at
+    // the merged seat, which answers in different words.
+    let not_an_object = policy_doc(
+        vec![plain_rule(
+            "bad-port",
+            "network",
+            "allow",
+            Value::obj(vec![("port", Value::int(443))]),
+        )],
+        "deny",
+    );
+    match load_policy(&not_an_object) {
+        Ok(_) => panic!("the policy with a bare port loaded"),
+        Err(error) => assert_eq!(
+            error.to_string(),
+            "the match of rule bad-port on the port is not a port matcher holding one exact port"
+        ),
+    }
+    let wrong_key = policy_doc(
+        vec![plain_rule(
+            "bad-port",
+            "network",
+            "allow",
+            Value::obj(vec![("port", matcher("glob", "44*"))]),
+        )],
+        "deny",
+    );
+    match load_policy(&wrong_key) {
+        Ok(_) => panic!("the policy with a glob port matcher loaded"),
+        Err(error) => assert_eq!(
+            error.to_string(),
+            "the match of rule bad-port on the port is not a port matcher holding one exact port"
+        ),
+    }
+}
