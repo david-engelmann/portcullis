@@ -3222,3 +3222,69 @@ fn top_level_help_on_a_dead_output_stream_exits_two() {
     let status = run_cli_with_a_full_stream(&["--help"], "stdout");
     assert_eq!(status, 2);
 }
+
+// --- the glob bracket classes ---------------------------------------------------
+//
+// The contract's probe preamble names the bracket pattern as
+// probed fnmatchcase behaviour, a bracket pattern such as [!a]
+// matching one character that is not a, and the matcher's own
+// documentation states the class language: single characters
+// and ranges, a leading exclamation mark negating, a reversed
+// range admitting nothing, and an unclosed bracket read as a
+// literal. No pin staged a bracket pattern before these.
+
+fn glob_path_decision(pattern: &str, path: &str) -> Value {
+    let rules = vec![plain_rule(
+        "class-rule",
+        "file",
+        "allow",
+        Value::obj(vec![("path", matcher("glob", pattern))]),
+    )];
+    decide(&file_call("read", path), rules, "deny")
+}
+
+#[test]
+fn a_glob_class_admits_its_characters_and_refuses_others() {
+    let decision = glob_path_decision("/work/[ab].txt", "/work/a.txt");
+    assert_eq!(field(&decision, "decision"), &s("allow"));
+    let decision = glob_path_decision("/work/[ab].txt", "/work/b.txt");
+    assert_eq!(field(&decision, "decision"), &s("allow"));
+    let decision = glob_path_decision("/work/[ab].txt", "/work/c.txt");
+    assert_eq!(field(&decision, "decision"), &s("deny"));
+}
+
+#[test]
+fn a_glob_range_admits_its_ends_and_refuses_past_the_top() {
+    let decision = glob_path_decision("/work/[a-c].txt", "/work/a.txt");
+    assert_eq!(field(&decision, "decision"), &s("allow"));
+    let decision = glob_path_decision("/work/[a-c].txt", "/work/c.txt");
+    assert_eq!(field(&decision, "decision"), &s("allow"));
+    let decision = glob_path_decision("/work/[a-c].txt", "/work/d.txt");
+    assert_eq!(field(&decision, "decision"), &s("deny"));
+}
+
+#[test]
+fn a_negated_glob_class_refuses_its_character_and_admits_another() {
+    let decision = glob_path_decision("/work/[!a].txt", "/work/a.txt");
+    assert_eq!(field(&decision, "decision"), &s("deny"));
+    let decision = glob_path_decision("/work/[!a].txt", "/work/b.txt");
+    assert_eq!(field(&decision, "decision"), &s("allow"));
+}
+
+#[test]
+fn a_reversed_glob_range_admits_nothing() {
+    let decision = glob_path_decision("/work/[c-a].txt", "/work/a.txt");
+    assert_eq!(field(&decision, "decision"), &s("deny"));
+    let decision = glob_path_decision("/work/[c-a].txt", "/work/b.txt");
+    assert_eq!(field(&decision, "decision"), &s("deny"));
+    let decision = glob_path_decision("/work/[c-a].txt", "/work/c.txt");
+    assert_eq!(field(&decision, "decision"), &s("deny"));
+}
+
+#[test]
+fn an_unclosed_glob_bracket_matches_the_literal_bracket() {
+    let decision = glob_path_decision("/work/[a.txt", "/work/[a.txt");
+    assert_eq!(field(&decision, "decision"), &s("allow"));
+    let decision = glob_path_decision("/work/[a.txt", "/work/a.txt");
+    assert_eq!(field(&decision, "decision"), &s("deny"));
+}
