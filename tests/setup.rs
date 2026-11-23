@@ -585,3 +585,56 @@ fn the_scanner_answers_a_failed_output_write_with_exit_two() {
         .unwrap();
     assert_eq!(output.status.code(), Some(2));
 }
+
+fn scan_current_dir(dir: &Path) -> ScanOutput {
+    let output = Command::new(env!("CARGO_BIN_EXE_codepoint_scan"))
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    ScanOutput {
+        status: output.status.code().unwrap_or(-1),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    }
+}
+
+#[test]
+fn codepoint_scan_defaults_to_the_current_directory() {
+    // A preservation pin. The scanner's module record states the
+    // default as a deliberate difference from the setup scanner it
+    // ports, which defaulted to the root of the repo it shipped in,
+    // so this pin passes on the standing code by design and fails
+    // on a form that refuses with no argument and on a form that
+    // defaults to any root but the working directory.
+    let dir = temp_dir("default-root");
+    std::fs::write(dir.join("note.md"), "a\u{2014}b").unwrap();
+    let result = scan_current_dir(&dir);
+    assert_eq!(result.status, 1);
+    assert!(
+        result.stdout.contains("em dash U+2014 count 1"),
+        "{}",
+        result.stdout
+    );
+    assert!(result.stdout.contains("note.md"), "{}", result.stdout);
+}
+
+#[cfg(unix)]
+#[test]
+fn codepoint_scan_refuses_a_file_that_cannot_be_read() {
+    // The scanner's module record states that a file that cannot
+    // be read is a clean scan error at exit 2. A dangling symlink
+    // stages the failure portably, because the walk carries it
+    // onto the file list as a symlink whose target is not a
+    // directory and the read then fails, under a root run as much
+    // as any other, where a permission staging would not fail for
+    // root. The pin fails on a form that skips the file and
+    // reports the counts of the rest, on the decode wording, and
+    // on a panic escape.
+    let dir = temp_dir("cannot-read");
+    std::os::unix::fs::symlink("no-such-target.md", dir.join("dangling.md")).unwrap();
+    let result = scan_tree(&dir);
+    assert_eq!(result.status, 2);
+    assert!(result.stdout.is_empty(), "{}", result.stdout);
+    assert!(result.stderr.contains("cannot read"), "{}", result.stderr);
+    assert!(result.stderr.contains("dangling.md"), "{}", result.stderr);
+}
