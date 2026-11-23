@@ -15,28 +15,22 @@ use std::process::Command;
 
 use sha2::{Digest, Sha256};
 
+#[allow(dead_code)]
+mod common;
+use common::root;
+
 const MARKER: &str = "<!-- repo annex below this line -->";
 const GATE_COMMAND: &str = "cargo test";
 const SCAN_COMMAND: &str = "cargo run --bin codepoint_scan";
 const FMT_COMMAND: &str = "cargo fmt --check";
 const CLIPPY_COMMAND: &str = "cargo clippy --all-targets -- -D warnings";
 
-fn root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
-
 fn read(name: &str) -> String {
     std::fs::read_to_string(root().join(name)).unwrap()
 }
 
 fn temp_dir(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "portcullis-setup-test-{}-{tag}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
+    common::temp_dir_with("portcullis-setup-test", tag)
 }
 
 #[test]
@@ -357,8 +351,16 @@ struct ScanOutput {
 }
 
 fn scan_tree(root: &Path) -> ScanOutput {
+    run_scanner(&[root.as_os_str()])
+}
+
+fn scan_tree_with_extra(root: &Path, extra: &str) -> ScanOutput {
+    run_scanner(&[root.as_os_str(), std::ffi::OsStr::new(extra)])
+}
+
+fn run_scanner(args: &[&std::ffi::OsStr]) -> ScanOutput {
     let output = Command::new(env!("CARGO_BIN_EXE_codepoint_scan"))
-        .arg(root)
+        .args(args)
         .output()
         .unwrap();
     ScanOutput {
@@ -489,6 +491,7 @@ fn codepoint_scan_fails_loudly_on_undecodable_input() {
     std::fs::write(dir.join("note.md"), b"\xff\xfe not utf-8").unwrap();
     let result = scan_tree(&dir);
     assert_eq!(result.status, 2);
+    assert!(result.stdout.is_empty(), "{}", result.stdout);
     assert!(result.stderr.contains("note.md"));
 }
 
@@ -518,4 +521,67 @@ fn codepoint_scan_skips_a_file_with_an_uppercase_binary_suffix() {
     assert_eq!(result.status, 0);
     assert!(result.stdout.contains("em dash U+2014 count 0"));
     assert!(result.stdout.contains("en dash U+2013 count 0"));
+}
+
+#[test]
+fn codepoint_scan_refuses_an_argument_after_the_root() {
+    let dir = temp_dir("extra-argument");
+    std::fs::write(dir.join("clean.md"), "clean").unwrap();
+    let result = scan_tree_with_extra(&dir, "second-root");
+    assert_eq!(result.status, 2);
+    assert!(result.stdout.is_empty(), "{}", result.stdout);
+    assert!(result.stderr.contains("second-root"), "{}", result.stderr);
+}
+
+#[test]
+fn codepoint_scan_refuses_an_argument_after_a_dirty_root() {
+    let dir = temp_dir("extra-argument-dirty");
+    std::fs::write(dir.join("note.md"), "a\u{2014}b").unwrap();
+    let result = scan_tree_with_extra(&dir, "second-root");
+    assert_eq!(result.status, 2);
+    assert!(result.stdout.is_empty(), "{}", result.stdout);
+    assert!(result.stderr.contains("second-root"), "{}", result.stderr);
+}
+
+#[test]
+fn codepoint_scan_refuses_a_root_that_does_not_stand() {
+    // A preservation pin. The scanner's module record states the
+    // refusal as a deliberate difference from the setup scanner it
+    // ports, which exited 0 with zero counts on a root that does
+    // not stand, so this pin passes on the standing code by design
+    // and fails on that answer and on any form that reads a missing
+    // root as an empty tree.
+    let missing = temp_dir("missing-root").join("no-such-tree");
+    let result = scan_tree(&missing);
+    assert_eq!(result.status, 2);
+    assert!(result.stdout.is_empty(), "{}", result.stdout);
+    assert!(result.stderr.contains("cannot read"), "{}", result.stderr);
+    assert!(
+        result.stderr.contains(&missing.display().to_string()),
+        "{}",
+        result.stderr
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn the_scanner_answers_a_failed_output_write_with_exit_two() {
+    // The scanner's lines travel through a checked writer, so
+    // an output stream that refuses the write is a scan error
+    // at exit 2. On the standing code the hit line's print
+    // macro panics on the failed write and the process dies
+    // at 101.
+    let root = temp_dir("codepoint-full");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("dash.txt"), "before \u{2014} after\n").unwrap();
+    let full = std::fs::OpenOptions::new()
+        .write(true)
+        .open("/dev/full")
+        .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_codepoint_scan"))
+        .arg(&root)
+        .stdout(std::process::Stdio::from(full))
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
 }
