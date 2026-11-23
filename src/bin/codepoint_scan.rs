@@ -12,7 +12,10 @@
 //! run over a tree the local gate has already built in. The scan
 //! root defaults to the current directory, where the setup scanner
 //! defaulted to the root of the repo it shipped in, and the gate
-//! names the root explicitly either way. A scan root that does not
+//! names the root explicitly either way. The scanner takes at
+//! most one argument, the root, and an argument standing after
+//! the root is a scan error at exit 2, answered before any
+//! scanning. A scan root that does not
 //! stand is a scan error at exit 2, where the setup scanner exited
 //! 0 with zero counts. A file that cannot be read is a clean scan
 //! error at exit 2, where the setup scanner let the failure escape
@@ -117,6 +120,13 @@ fn scan(root: &Path) -> Result<(usize, usize), ScanError> {
 }
 
 fn main() -> ExitCode {
+    if let Some(extra) = std::env::args_os().nth(2) {
+        eprintln!(
+            "scan error, unexpected argument {}",
+            PathBuf::from(extra).display()
+        );
+        return ExitCode::from(2);
+    }
     let root = std::env::args_os()
         .nth(1)
         .map(PathBuf::from)

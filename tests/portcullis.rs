@@ -1009,6 +1009,37 @@ malformed_case!(
 );
 
 #[test]
+fn an_option_name_in_value_position_names_the_option_that_lacks_its_value() {
+    let result = run_cli(
+        &["check", "--policy", "--log", "audit.jsonl", "call.json"],
+        None,
+    );
+    assert_eq!(result.status, 2);
+    assert_eq!(result.stdout, "");
+    assert!(
+        result
+            .stderr
+            .contains("portcullis: error: argument --policy: expected one argument"),
+        "{}",
+        result.stderr
+    );
+}
+
+#[test]
+fn the_separator_in_value_position_names_the_option_that_lacks_its_value() {
+    let result = run_cli(&["check", "--policy", "--", "call.json"], None);
+    assert_eq!(result.status, 2);
+    assert_eq!(result.stdout, "");
+    assert!(
+        result
+            .stderr
+            .contains("portcullis: error: argument --policy: expected one argument"),
+        "{}",
+        result.stderr
+    );
+}
+
+#[test]
 fn a_call_with_duplicate_keys_never_reaches_a_decision() {
     let dir = temp_dir("duplicate-call");
     let call_path = write_text(
@@ -1433,6 +1464,7 @@ fn a_torn_final_line_is_reported_at_its_line() {
     drop(handle);
     let result = run_cli(&["log", "--log", log_path.to_str().unwrap()], None);
     assert_eq!(result.status, 1);
+    assert_eq!(result.stdout, "");
     assert!(result.stderr.contains("line 3"), "{}", result.stderr);
 }
 
@@ -1453,9 +1485,111 @@ fn a_spoiled_middle_line_is_reported_at_its_line() {
     portcullis::append_decision(&log_path, &decision).unwrap();
     let result = run_cli(&["log", "--log", log_path.to_str().unwrap()], None);
     assert_eq!(result.status, 1);
+    assert_eq!(result.stdout, "");
     assert!(result.stderr.contains("line 2"), "{}", result.stderr);
 }
 
+#[test]
+fn an_empty_line_inside_a_log_is_reported_at_its_line() {
+    let dir = temp_dir("empty-line");
+    let log_path = dir.join("audit.jsonl");
+    let decision = decide(&shell_call(&["ls"]), vec![], "allow");
+    portcullis::append_decision(&log_path, &decision).unwrap();
+    let mut handle = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&log_path)
+        .unwrap();
+    handle.write_all(b"\n").unwrap();
+    drop(handle);
+    portcullis::append_decision(&log_path, &decision).unwrap();
+    let result = run_cli(&["log", "--log", log_path.to_str().unwrap()], None);
+    assert_eq!(result.status, 1);
+    assert_eq!(result.stdout, "");
+    assert!(result.stderr.contains("line 2"), "{}", result.stderr);
+}
+
+#[test]
+fn a_blank_final_line_is_reported_at_its_line() {
+    let dir = temp_dir("blank-final-line");
+    let log_path = dir.join("audit.jsonl");
+    let decision = decide(&shell_call(&["ls"]), vec![], "allow");
+    portcullis::append_decision(&log_path, &decision).unwrap();
+    portcullis::append_decision(&log_path, &decision).unwrap();
+    let mut handle = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&log_path)
+        .unwrap();
+    handle.write_all(b"\n").unwrap();
+    drop(handle);
+    let result = run_cli(&["log", "--log", log_path.to_str().unwrap()], None);
+    assert_eq!(result.status, 1);
+    assert_eq!(result.stdout, "");
+    assert!(result.stderr.contains("line 3"), "{}", result.stderr);
+}
+
+#[test]
+fn a_complete_final_record_without_its_newline_reads_whole() {
+    // Preservation pin. The reader splits the log on its
+    // newlines and drops only the empty piece a trailing
+    // newline leaves behind, so a final record that stands
+    // complete without its newline is a line of the log and
+    // reads whole. A reader that refuses an unterminated
+    // final segment as torn, or that drops it silently,
+    // fails this pin, and the torn line pin above holds the
+    // other direction, an incomplete final segment refusing
+    // at its line. This guard passes on the standing code by
+    // design.
+    let dir = temp_dir("whole-final-record");
+    let log_path = dir.join("audit.jsonl");
+    let decision = decide(&shell_call(&["ls"]), vec![], "allow");
+    portcullis::append_decision(&log_path, &decision).unwrap();
+    let line = canonical(&decision);
+    let mut handle = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&log_path)
+        .unwrap();
+    handle.write_all(&line).unwrap();
+    drop(handle);
+    let records = read_log(&log_path).unwrap();
+    assert_eq!(records.len(), 2);
+    assert_eq!(canonical(&records[1]), canonical(&decision));
+    let result = run_cli(&["log", "--log", log_path.to_str().unwrap()], None);
+    assert_eq!(result.status, 0);
+    let printed: Vec<Value> = result
+        .stdout
+        .lines()
+        .map(|line| strict_parse(line).unwrap())
+        .collect();
+    assert_eq!(printed.len(), 2);
+    assert_eq!(canonical(&printed[0]), canonical(&decision));
+    assert_eq!(canonical(&printed[1]), canonical(&decision));
+}
+
+#[test]
+fn an_empty_log_reads_as_no_records() {
+    // Preservation pin, the decision of PC-A67. A log file
+    // that stands and holds no bytes holds no records. The
+    // reader splits the log on its newlines and drops the
+    // empty piece the split leaves behind, so the file
+    // yields zero records, and the log command prints
+    // nothing and exits 0. A reader that refuses the empty
+    // file as corruption at its first line, the form a split
+    // that keeps its empty piece takes, fails this pin, and
+    // so does a reader that answers it with the caller error
+    // of a file that does not stand. The audit of the same
+    // file stands pinned at tests/audit.rs,
+    // an_empty_log_audits_to_a_report_of_zeroes. This guard
+    // passes on the standing code by design.
+    let dir = temp_dir("empty-log");
+    let log_path = dir.join("audit.jsonl");
+    std::fs::write(&log_path, "").unwrap();
+    let records = read_log(&log_path).unwrap();
+    assert_eq!(records.len(), 0);
+    let result = run_cli(&["log", "--log", log_path.to_str().unwrap()], None);
+    assert_eq!(result.status, 0);
+    assert_eq!(result.stdout, "");
+    assert_eq!(result.stderr, "");
+}
 #[test]
 fn a_decision_that_cannot_be_appended_is_not_delivered() {
     let dir = temp_dir("no-append");
@@ -1507,6 +1641,7 @@ fn the_log_command_treats_a_missing_log_as_a_caller_error() {
         None,
     );
     assert_eq!(result.status, 2);
+    assert_eq!(result.stdout, "");
 }
 
 // --- the command line ---------------------------------------------------------------
@@ -2127,6 +2262,7 @@ fn an_undecodable_log_line_is_corruption_at_its_line() {
     }
     let result = run_cli(&["log", "--log", log_path.to_str().unwrap()], None);
     assert_eq!(result.status, 1);
+    assert_eq!(result.stdout, "");
     assert!(result.stderr.contains("line 2"), "{}", result.stderr);
 }
 
@@ -2331,4 +2467,637 @@ fn an_inline_option_value_keeps_its_os_bytes() {
     assert_eq!(output.status.code(), Some(0));
     assert!(log_path.exists());
     assert_eq!(read_log(&log_path).unwrap().len(), 1);
+}
+
+// --- the reader's stated bounds, staged at their edges ------------------
+//
+// The port amendment in CONTRACT.md states the 4,300 digit parse
+// limit and the one thousand nesting bound as contract behaviour,
+// and the binding mirrors both bounds as constants of its own.
+// These pins hold each bound at its exact edge on this surface;
+// the smoke suite holds the same edges on the binding's surface.
+
+#[test]
+fn an_integer_of_exactly_the_digit_bound_parses() {
+    let text = "1".repeat(4_300);
+    let value = strict_parse(&text).unwrap();
+    assert_eq!(String::from_utf8(canonical(&value)).unwrap(), text);
+}
+
+#[test]
+fn an_integer_one_digit_past_the_bound_is_refused() {
+    let text = "1".repeat(4_301);
+    assert_eq!(
+        strict_parse(&text).unwrap_err(),
+        "the document carries an integer too wide to parse"
+    );
+}
+
+#[test]
+fn a_document_nested_to_the_depth_bound_parses() {
+    let text = format!("{}1{}", "[".repeat(1_000), "]".repeat(1_000));
+    assert!(strict_parse(&text).is_ok());
+}
+
+#[test]
+fn a_document_nested_one_level_past_the_depth_bound_is_refused() {
+    let text = format!("{}1{}", "[".repeat(1_001), "]".repeat(1_001));
+    assert_eq!(
+        strict_parse(&text).unwrap_err(),
+        "the document nests too deeply to parse"
+    );
+}
+
+#[test]
+fn a_call_file_nested_past_the_depth_bound_is_a_caller_error() {
+    let dir = temp_dir("depth-bound-call");
+    let policy_path = write_json(&dir.join("policy.json"), &policy_doc(vec![], "deny"));
+    let call_path = write_text(
+        &dir.join("call.json"),
+        &format!("{}1{}", "[".repeat(1_001), "]".repeat(1_001)),
+    );
+    let result = run_cli(
+        &[
+            "check",
+            "--policy",
+            policy_path.to_str().unwrap(),
+            "--log",
+            dir.join("audit.jsonl").to_str().unwrap(),
+            call_path.to_str().unwrap(),
+        ],
+        None,
+    );
+    assert_eq!(result.status, 2);
+    assert_eq!(result.stdout, "");
+    assert!(
+        result.stderr.contains("does not parse as strict JSON"),
+        "{}",
+        result.stderr
+    );
+}
+
+#[test]
+fn an_option_prefix_in_value_position_names_the_option_that_lacks_its_value() {
+    let dir = temp_dir("option-prefix-value");
+    let call_path = write_json(&dir.join("call.json"), &shell_call(&["ls"]));
+    let log_path = dir.join("audit.jsonl");
+    let result = run_cli(
+        &[
+            "check",
+            "--policy",
+            "--pol",
+            "--log",
+            log_path.to_str().unwrap(),
+            call_path.to_str().unwrap(),
+        ],
+        None,
+    );
+    assert_eq!(result.status, 2);
+    assert_eq!(result.stdout, "");
+    assert!(
+        result
+            .stderr
+            .contains("portcullis: error: argument --policy: expected one argument"),
+        "{}",
+        result.stderr
+    );
+    assert!(!log_path.exists());
+}
+
+#[test]
+fn an_unknown_option_name_in_value_position_names_the_option_that_lacks_its_value() {
+    let dir = temp_dir("option-unknown-value");
+    let call_path = write_json(&dir.join("call.json"), &shell_call(&["ls"]));
+    let log_path = dir.join("audit.jsonl");
+    let result = run_cli(
+        &[
+            "check",
+            "--policy",
+            "--bogus",
+            "--log",
+            log_path.to_str().unwrap(),
+            call_path.to_str().unwrap(),
+        ],
+        None,
+    );
+    assert_eq!(result.status, 2);
+    assert_eq!(result.stdout, "");
+    assert!(
+        result
+            .stderr
+            .contains("portcullis: error: argument --policy: expected one argument"),
+        "{}",
+        result.stderr
+    );
+    assert!(!log_path.exists());
+}
+
+#[test]
+fn a_short_option_form_in_value_position_names_the_option_that_lacks_its_value() {
+    let dir = temp_dir("option-short-value");
+    let call_path = write_json(&dir.join("call.json"), &shell_call(&["ls"]));
+    let log_path = dir.join("audit.jsonl");
+    let result = run_cli(
+        &[
+            "check",
+            "--policy",
+            "-x",
+            "--log",
+            log_path.to_str().unwrap(),
+            call_path.to_str().unwrap(),
+        ],
+        None,
+    );
+    assert_eq!(result.status, 2);
+    assert_eq!(result.stdout, "");
+    assert!(
+        result
+            .stderr
+            .contains("portcullis: error: argument --policy: expected one argument"),
+        "{}",
+        result.stderr
+    );
+    assert!(!log_path.exists());
+}
+
+#[test]
+fn a_negative_number_shape_and_the_bare_hyphen_stand_as_option_values() {
+    // The Python parser accepts a negative number's shape as an
+    // option value because no option of this command line looks
+    // like a negative number, and the bare hyphen names a path by
+    // the standing convention, so both still reach the policy
+    // load and draw its policy error decision at exit one. A
+    // repair that refused every hyphen led token in value
+    // position would answer both shapes at exit two instead.
+    let dir = temp_dir("option-number-value");
+    let call_path = write_json(&dir.join("call.json"), &shell_call(&["ls"]));
+    for (tag, value) in [("negative", "-1"), ("hyphen", "-")] {
+        let log_path = dir.join(format!("audit-{tag}.jsonl"));
+        let result = run_cli(
+            &[
+                "check",
+                "--policy",
+                value,
+                "--log",
+                log_path.to_str().unwrap(),
+                call_path.to_str().unwrap(),
+            ],
+            None,
+        );
+        assert_eq!(result.status, 1, "{value}");
+        assert!(
+            result.stdout.contains("\"decision\":\"deny\""),
+            "{value}: {}",
+            result.stdout
+        );
+        assert!(log_path.exists(), "{value}");
+    }
+}
+
+#[test]
+fn malformed_negative_number_shapes_name_the_option_that_lacks_its_value() {
+    // The Python parser accepts a negative number's complete
+    // shape as an option value and refuses the malformed
+    // suffixes as options, so each of these still names the
+    // option that lacks its value at exit two.
+    let dir = temp_dir("option-malformed-value");
+    let call_path = write_json(&dir.join("call.json"), &shell_call(&["ls"]));
+    for (tag, value) in [("suffix", "-1abc"), ("second-point", "-1.2.3")] {
+        let log_path = dir.join(format!("audit-{tag}.jsonl"));
+        let result = run_cli(
+            &[
+                "check",
+                "--policy",
+                value,
+                "--log",
+                log_path.to_str().unwrap(),
+                call_path.to_str().unwrap(),
+            ],
+            None,
+        );
+        assert_eq!(result.status, 2, "{value}");
+        assert_eq!(result.stdout, "", "{value}");
+        assert!(
+            result
+                .stderr
+                .contains("portcullis: error: argument --policy: expected one argument"),
+            "{value}: {}",
+            result.stderr
+        );
+        assert!(!log_path.exists(), "{value}");
+    }
+}
+
+#[test]
+fn a_space_carrying_token_stands_as_an_option_value() {
+    // The Python parser never reads a token carrying a space as
+    // an option, so such a token standing where a value is
+    // expected reaches the policy load and draws its policy
+    // error decision at exit one, like the bare hyphen and the
+    // negative number's shape.
+    let dir = temp_dir("option-space-value");
+    let call_path = write_json(&dir.join("call.json"), &shell_call(&["ls"]));
+    let log_path = dir.join("audit.jsonl");
+    let result = run_cli(
+        &[
+            "check",
+            "--policy",
+            "-policy file.json",
+            "--log",
+            log_path.to_str().unwrap(),
+            call_path.to_str().unwrap(),
+        ],
+        None,
+    );
+    assert_eq!(result.status, 1);
+    assert!(
+        result.stdout.contains("\"decision\":\"deny\""),
+        "{}",
+        result.stdout
+    );
+    assert!(log_path.exists());
+}
+
+fn run_cli_in(dir: &Path, arguments: &[&str]) -> CliOutput {
+    let output = Command::new(env!("CARGO_BIN_EXE_portcullis"))
+        .args(arguments)
+        .current_dir(dir)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .unwrap();
+    CliOutput {
+        status: output.status.code().unwrap_or(-1),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    }
+}
+
+#[test]
+fn a_space_carrying_token_in_option_position_stands_as_the_call() {
+    // The Python parser never reads a token carrying a space
+    // as an option string, so a call file literally named
+    // with a leading hyphen and a space, handed over as one
+    // argument, is the call positional: the check runs, the
+    // missing policy draws its policy error decision at exit
+    // one, and the record is appended. A parser that routes
+    // every hyphen led token into its option machinery
+    // refuses the token as unrecognized at exit two and
+    // decides nothing.
+    let dir = temp_dir("positional-space-call");
+    write_json(&dir.join("-policy file.json"), &shell_call(&["ls"]));
+    let policy_path = dir.join("policy.json");
+    let log_path = dir.join("audit.jsonl");
+    let result = run_cli_in(
+        &dir,
+        &[
+            "check",
+            "--policy",
+            policy_path.to_str().unwrap(),
+            "--log",
+            log_path.to_str().unwrap(),
+            "-policy file.json",
+        ],
+    );
+    assert_eq!(result.status, 1);
+    assert!(
+        result.stdout.contains("\"decision\":\"deny\""),
+        "{}",
+        result.stdout
+    );
+    assert!(log_path.exists());
+}
+
+#[test]
+fn a_negative_number_shape_in_option_position_stands_as_the_call() {
+    // The Python parser takes a negative number's complete
+    // shape as a positional because no option of this command
+    // line looks like a negative number, so a call file named
+    // -1 is decided like any other call. The same refusal at
+    // exit two answers it on a parser that refuses every
+    // hyphen led token where it stands.
+    let dir = temp_dir("positional-number-call");
+    write_json(&dir.join("-1"), &shell_call(&["ls"]));
+    let policy_path = dir.join("policy.json");
+    let log_path = dir.join("audit.jsonl");
+    let result = run_cli_in(
+        &dir,
+        &[
+            "check",
+            "--policy",
+            policy_path.to_str().unwrap(),
+            "--log",
+            log_path.to_str().unwrap(),
+            "-1",
+        ],
+    );
+    assert_eq!(result.status, 1);
+    assert!(
+        result.stdout.contains("\"decision\":\"deny\""),
+        "{}",
+        result.stdout
+    );
+    assert!(log_path.exists());
+}
+
+#[test]
+fn the_log_subcommand_refuses_the_space_carrying_token_with_the_standing_words() {
+    // The log subcommand takes no positional, so the token
+    // the parser now reads as a positional still draws the
+    // refusal, with the same words and the same exit the
+    // option machinery answered before. This guard passes on
+    // the standing code by design, the words being identical
+    // through either branch, and fails on a repair that
+    // routes the token anywhere else.
+    let dir = temp_dir("positional-space-log");
+    let log_path = dir.join("audit.jsonl");
+    let result = run_cli(
+        &[
+            "log",
+            "--log",
+            log_path.to_str().unwrap(),
+            "-policy file.json",
+        ],
+        None,
+    );
+    assert_eq!(result.status, 2);
+    assert_eq!(result.stdout, "");
+    assert!(
+        result
+            .stderr
+            .contains("portcullis: error: unrecognized arguments: -policy file.json"),
+        "{}",
+        result.stderr
+    );
+    assert!(!log_path.exists());
+}
+
+#[test]
+fn an_equals_form_with_a_space_in_its_value_stands_as_the_option() {
+    // The equals form takes its inline value whole, the
+    // space standing after the equals sign, so a policy path
+    // carrying a space still loads through the option and
+    // the call is decided. A blanket repair that reads every
+    // space carrying token as a positional would leave the
+    // option unfilled and answer a missing argument refusal
+    // at exit two instead. This guard passes on the standing
+    // code by design.
+    let dir = temp_dir("positional-equals-space");
+    let call_path = write_json(&dir.join("call.json"), &shell_call(&["ls"]));
+    let policy_path = dir.join("my policy.json");
+    let log_path = dir.join("audit.jsonl");
+    let inline = format!("--policy={}", policy_path.to_str().unwrap());
+    let result = run_cli(
+        &[
+            "check",
+            inline.as_str(),
+            "--log",
+            log_path.to_str().unwrap(),
+            call_path.to_str().unwrap(),
+        ],
+        None,
+    );
+    assert_eq!(result.status, 1);
+    assert!(
+        result.stdout.contains("\"decision\":\"deny\""),
+        "{}",
+        result.stdout
+    );
+    assert!(log_path.exists());
+}
+
+#[test]
+fn a_file_rule_matching_only_the_normalized_path_still_allows() {
+    // The given path carries a dot segment, so its raw form
+    // does not match the rule's glob and only its normalized
+    // form does. The normalized test stands behind the raw
+    // test, deferred by PC-A51 and never dropped: a repair
+    // that drops it answers the default here instead of the
+    // rule, and a repair that skips it on a raw miss does the
+    // same.
+    let rules = vec![plain_rule(
+        "allow-data",
+        "file",
+        "allow",
+        Value::obj(vec![
+            ("operation", matcher("exact", "read")),
+            ("path", matcher("glob", "/srv/data/*")),
+        ]),
+    )];
+    let decision = decide(&file_call("read", "/srv/./data/file.txt"), rules, "deny");
+    assert_eq!(field(&decision, "decision"), &s("allow"));
+    assert_eq!(
+        field(&decision, "source"),
+        &Value::obj(vec![("type", s("rule")), ("rule", s("allow-data"))])
+    );
+}
+
+#[test]
+fn a_file_rule_matching_the_given_path_with_its_dot_segment_still_allows() {
+    // The exact pattern is the given path itself, dot segment
+    // standing, so the raw test decides the match and the
+    // normalized form, a different string, is never the form
+    // that can decide it. A repair that tests the normalized
+    // form instead of the raw form, rather than after it,
+    // answers the default here instead of the rule.
+    let rules = vec![plain_rule(
+        "allow-dotted",
+        "file",
+        "allow",
+        Value::obj(vec![
+            ("operation", matcher("exact", "read")),
+            ("path", matcher("exact", "/srv/./data/file.txt")),
+        ]),
+    )];
+    let decision = decide(&file_call("read", "/srv/./data/file.txt"), rules, "deny");
+    assert_eq!(field(&decision, "decision"), &s("allow"));
+    assert_eq!(
+        field(&decision, "source"),
+        &Value::obj(vec![("type", s("rule")), ("rule", s("allow-dotted"))])
+    );
+}
+
+#[test]
+fn the_help_option_with_an_inline_value_refuses_at_exit_two() {
+    // The help option takes no value, so an equals form
+    // carrying one is a caller error on the mirrored parser,
+    // which refuses it at exit 2 naming the ignored argument
+    // and printing nothing. The standing code matches the
+    // option's name and prints the help without judging the
+    // inline value, exiting 0 with the help on stdout, so
+    // this pin fails there.
+    let dir = temp_dir("help-inline-value");
+    let log_path = dir.join("audit.jsonl");
+    let result = run_cli(
+        &["check", "--help=x", "--log", log_path.to_str().unwrap()],
+        None,
+    );
+    assert_eq!(result.status, 2);
+    assert_eq!(result.stdout, "");
+    assert!(
+        result
+            .stderr
+            .contains("portcullis: error: argument --help: ignored explicit argument 'x'"),
+        "{}",
+        result.stderr
+    );
+    assert!(!log_path.exists());
+}
+
+#[test]
+fn the_help_option_with_a_prefixed_inline_value_refuses_at_exit_two() {
+    // The unambiguous prefix form of the help option's name
+    // carrying an inline value is the same shape on a second
+    // subcommand, and the mirrored parser refuses it the
+    // same way. The standing code prints the log help and
+    // exits 0, so this pin fails there.
+    let result = run_cli(&["log", "--he=x"], None);
+    assert_eq!(result.status, 2);
+    assert_eq!(result.stdout, "");
+    assert!(
+        result
+            .stderr
+            .contains("portcullis: error: argument --help: ignored explicit argument 'x'"),
+        "{}",
+        result.stderr
+    );
+}
+
+#[test]
+fn the_help_option_with_an_empty_inline_value_refuses_at_exit_two() {
+    // An inline value that stands empty is still an explicit
+    // argument, and the mirrored parser refuses it at exit 2
+    // naming the empty value. A repair that refuses only a
+    // nonempty inline value prints the audit help here and
+    // exits 0, as the standing code does, so this pin fails
+    // on both.
+    let result = run_cli(&["audit", "--help="], None);
+    assert_eq!(result.status, 2);
+    assert_eq!(result.stdout, "");
+    assert!(
+        result
+            .stderr
+            .contains("portcullis: error: argument --help: ignored explicit argument ''"),
+        "{}",
+        result.stderr
+    );
+}
+
+#[cfg(unix)]
+fn run_cli_with_dead_stdout(arguments: &[&str]) -> CliOutput {
+    // Run the binary with its standard output staged at
+    // /dev/full, whose writes always fail, and its error
+    // stream captured, answering the exit and the error text.
+    let full = std::fs::OpenOptions::new()
+        .write(true)
+        .open("/dev/full")
+        .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_portcullis"))
+        .args(arguments)
+        .current_dir(root())
+        .stdout(Stdio::from(full))
+        .stderr(Stdio::piped())
+        .output()
+        .unwrap();
+    CliOutput {
+        status: output.status.code().unwrap_or(-1),
+        stdout: String::new(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_decision_that_could_not_be_printed_answers_two_and_stands_appended() {
+    // Preservation pin, the decision of PC-A69. The check
+    // command appends its decision and then prints it, and a
+    // failed print answers the decision could not be printed
+    // at exit 2, because a decision that could not be printed
+    // was not delivered even when it was appended. The call is
+    // staged to allow, so a print failure swallowed into the
+    // decision's own exit answers 0 here where the rule
+    // answers 2, and a check that counts the appended record
+    // delivered whatever the print did answers the same 0. A
+    // branch answering 2 without its sentence fails the error
+    // stream assertion. The record stands appended in the
+    // log, the delivery failure being the print's and not the
+    // append's. This guard passes on the standing code by
+    // design.
+    let dir = temp_dir("print-check");
+    let policy_path = write_json(&dir.join("policy.json"), &policy_doc(vec![], "allow"));
+    let call_path = write_json(&dir.join("call.json"), &shell_call(&["ls"]));
+    let log_path = dir.join("audit.jsonl");
+    let result = run_cli_with_dead_stdout(&[
+        "check",
+        "--policy",
+        policy_path.to_str().unwrap(),
+        "--log",
+        log_path.to_str().unwrap(),
+        call_path.to_str().unwrap(),
+    ]);
+    assert_eq!(result.status, 2);
+    assert!(
+        result.stderr.contains("the decision could not be printed"),
+        "{}",
+        result.stderr
+    );
+    let records = read_log(&log_path).unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(field(&records[0], "decision"), &s("allow"));
+}
+
+#[cfg(unix)]
+#[test]
+fn an_audit_log_that_could_not_be_printed_answers_two() {
+    // Preservation pin, the decision of PC-A69. The log
+    // command prints each record through the same checked
+    // print, and a failed print answers the audit log could
+    // not be printed at exit 2. A print failure swallowed
+    // into the command's own exit answers 0 here where the
+    // rule answers 2, and a branch answering 2 without its
+    // sentence fails the error stream assertion. This guard
+    // passes on the standing code by design.
+    let dir = temp_dir("print-log");
+    let log_path = dir.join("audit.jsonl");
+    let decision = decide(&shell_call(&["ls"]), vec![], "allow");
+    portcullis::append_decision(&log_path, &decision).unwrap();
+    let result = run_cli_with_dead_stdout(&["log", "--log", log_path.to_str().unwrap()]);
+    assert_eq!(result.status, 2);
+    assert!(
+        result.stderr.contains("the audit log could not be printed"),
+        "{}",
+        result.stderr
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn an_audit_report_that_could_not_be_printed_answers_two() {
+    // Preservation pin, the decision of PC-A69. The audit
+    // command prints its report through the same checked
+    // print, and a failed print answers the audit report
+    // could not be printed at exit 2. A print failure
+    // swallowed into the command's own exit answers 0 here
+    // where the rule answers 2, and a branch answering 2
+    // without its sentence fails the error stream assertion.
+    // This guard passes on the standing code by design.
+    let dir = temp_dir("print-audit");
+    let log_path = dir.join("audit.jsonl");
+    let decision = decide(&shell_call(&["ls"]), vec![], "allow");
+    portcullis::append_decision(&log_path, &decision).unwrap();
+    let result = run_cli_with_dead_stdout(&[
+        "audit",
+        "--log",
+        log_path.to_str().unwrap(),
+        "--sample",
+        "1",
+    ]);
+    assert_eq!(result.status, 2);
+    assert!(
+        result
+            .stderr
+            .contains("the audit report could not be printed"),
+        "{}",
+        result.stderr
+    );
 }
