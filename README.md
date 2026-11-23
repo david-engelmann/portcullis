@@ -81,7 +81,7 @@ exit 1
 
 ### Referring a call to a decision model
 
-A rule with the judge action refers the calls it matches to the model the policy judgment block names. The check command consults an external judge program through its --judge option. The program receives the request document on its standard input and answers with the reply body on its standard output. The example answers with a recorded reply held in a file, so the run needs no model access and no network.
+A rule with the judge action refers the calls it matches to the model the policy judgment block names. The check command consults an external judge program through its --judge option. The option's value runs through the system shell, so it may name a program together with its arguments, as the example below does. The program receives the request document on its standard input and answers with the reply body on its standard output. The example answers with a recorded reply held in a file, so the run needs no model access and no network.
 
 Save the three documents below as judge-policy.json, call-judge.json, and reply.json in one directory, and run the commands of this section from that directory.
 
