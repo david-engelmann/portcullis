@@ -3180,3 +3180,97 @@ fn evaluation_continues_past_a_hand_built_rewrite_rule_without_a_substitute() {
     );
     assert_eq!(field(&decision, "rewritten_call"), &Value::Null);
 }
+
+#[cfg(unix)]
+fn run_cli_with_a_full_stream(arguments: &[&str], stream: &str) -> i32 {
+    // Run the binary with one of its streams staged at
+    // /dev/full, whose writes always fail, and answer the exit
+    // code. The pins below hold the exits the error handling
+    // repair promises on a dead stream.
+    let full = std::fs::OpenOptions::new()
+        .write(true)
+        .open("/dev/full")
+        .unwrap();
+    let mut command = Command::new(env!("CARGO_BIN_EXE_portcullis"));
+    command.args(arguments).current_dir(root());
+    if stream == "stdout" {
+        command.stdout(Stdio::from(full));
+    } else {
+        command.stderr(Stdio::from(full));
+    }
+    let output = command.output().unwrap();
+    output.status.code().unwrap_or(-1)
+}
+
+#[cfg(unix)]
+#[test]
+fn a_caller_error_on_a_dead_error_stream_still_exits_two() {
+    // The caller error line travels through the fallible
+    // reporter, so a dead error stream cannot replace the exit
+    // with a panic. On the standing code the reporter's print
+    // macro panics and the process dies at 101.
+    let dir = temp_dir("dead-stderr-caller");
+    let policy_path = write_json(&dir.join("policy.json"), &policy_doc(vec![], "deny"));
+    let log_path = dir.join("audit.jsonl");
+    let missing = dir.join("missing.json");
+    let status = run_cli_with_a_full_stream(
+        &[
+            "check",
+            "--policy",
+            policy_path.to_str().unwrap(),
+            "--log",
+            log_path.to_str().unwrap(),
+            missing.to_str().unwrap(),
+        ],
+        "stderr",
+    );
+    assert_eq!(status, 2);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_corrupt_log_on_a_dead_error_stream_still_exits_one() {
+    let dir = temp_dir("dead-stderr-corrupt");
+    let log_path = dir.join("audit.jsonl");
+    let decision = decide(&shell_call(&["ls"]), vec![], "allow");
+    portcullis::append_decision(&log_path, &decision).unwrap();
+    let mut handle = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&log_path)
+        .unwrap();
+    handle
+        .write_all(b"{\"format\": \"portcullis-decision/1\"}\n")
+        .unwrap();
+    drop(handle);
+    let status =
+        run_cli_with_a_full_stream(&["log", "--log", log_path.to_str().unwrap()], "stderr");
+    assert_eq!(status, 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn an_argument_error_on_a_dead_error_stream_still_exits_two() {
+    let dir = temp_dir("dead-stderr-args");
+    let log_path = dir.join("audit.jsonl");
+    let status =
+        run_cli_with_a_full_stream(&["check", "--log", log_path.to_str().unwrap()], "stderr");
+    assert_eq!(status, 2);
+}
+
+#[cfg(unix)]
+#[test]
+fn subcommand_help_on_a_dead_output_stream_exits_two() {
+    // Help that could not be printed was not delivered, so the
+    // help path answers a caller error instead of success. On
+    // the standing code the failed print is discarded and the
+    // command exits 0.
+    let status = run_cli_with_a_full_stream(&["check", "--help"], "stdout");
+    assert_eq!(status, 2);
+}
+
+#[cfg(unix)]
+#[test]
+fn top_level_help_on_a_dead_output_stream_exits_two() {
+    let status = run_cli_with_a_full_stream(&["--help"], "stdout");
+    assert_eq!(status, 2);
+}
