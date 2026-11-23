@@ -15,28 +15,22 @@ use std::process::Command;
 
 use sha2::{Digest, Sha256};
 
+#[allow(dead_code)]
+mod common;
+use common::root;
+
 const MARKER: &str = "<!-- repo annex below this line -->";
 const GATE_COMMAND: &str = "cargo test";
 const SCAN_COMMAND: &str = "cargo run --bin codepoint_scan";
 const FMT_COMMAND: &str = "cargo fmt --check";
 const CLIPPY_COMMAND: &str = "cargo clippy --all-targets -- -D warnings";
 
-fn root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
-
 fn read(name: &str) -> String {
     std::fs::read_to_string(root().join(name)).unwrap()
 }
 
 fn temp_dir(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "portcullis-setup-test-{}-{tag}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
+    common::temp_dir_with("portcullis-setup-test", tag)
 }
 
 #[test]
