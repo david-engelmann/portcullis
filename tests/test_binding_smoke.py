@@ -349,6 +349,7 @@ def test_a_missing_log_and_a_corrupt_log_refuse_with_the_cli_words(tmp_path):
     assert isinstance(caught.value, portcullis.PortcullisError)
     shown = run_cli("log", "--log", str(log))
     assert shown.returncode == 1
+    assert shown.stdout == ""
     assert shown.stderr == f"error: {expected}\n"
 
 
@@ -570,6 +571,7 @@ def test_not_a_number_refuses_as_the_reader_refuses_it(tmp_path):
         str(call_path),
     )
     assert judged.returncode == 2
+    assert judged.stdout == ""
     assert judged.stderr == (
         "error: the call document does not parse as strict JSON\n"
     )
@@ -770,6 +772,7 @@ def test_audit_log_raises_the_corruption_class_over_a_corrupt_log(tmp_path):
     assert str(refused.value).startswith("the audit log is corrupt at line 2,")
     result = run_cli("audit", "--log", str(log), "--sample", "2")
     assert result.returncode == 1
+    assert result.stdout == ""
     assert result.stderr.strip() == f"error: {refused.value}"
 
 

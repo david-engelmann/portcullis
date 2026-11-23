@@ -81,7 +81,7 @@ exit 1
 
 ### Referring a call to a decision model
 
-A rule with the judge action refers the calls it matches to the model the policy judgment block names. The check command consults an external judge program through its --judge option. The program receives the request document on its standard input and answers with the reply body on its standard output. The example answers with a recorded reply held in a file, so the run needs no model access and no network.
+A rule with the judge action refers the calls it matches to the model the policy judgment block names. The check command consults an external judge program through its --judge option. The option's value runs through the system shell, so it may name a program together with its arguments, as the example below does. The program receives the request document on its standard input and answers with the reply body on its standard output. The example answers with a recorded reply held in a file, so the run needs no model access and no network.
 
 Save the three documents below as judge-policy.json, call-judge.json, and reply.json in one directory, and run the commands of this section from that directory.
 
@@ -125,7 +125,7 @@ portcullis check --policy judge-policy.json --log audit.jsonl --judge "cat reply
 ```
 
 ```
-{"at":"2026-11-07T08:12:42.338978+00:00","call_digest":"sha256:250a209806ea501e643c1d7ccb3f6a0dde645b81fa3dfbb6e0f75416440b9f92","decision":"allow","format":"portcullis-decision/2","interpreter":false,"model":{"confidence":0.93,"failure":null,"fallback":"none","model":"jev-1.13.0","probabilities":{"allow":0.93,"deny":0.03,"escalate":0.03,"other":0.01},"request_digest":"sha256:e2ac680d4f062f471ef518e2842718004cde79ea8de63a84908da31737baa69c","risk_score":4.2,"verdict":"allow"},"reason":"shell calls whose safety turns on the stated task","rewritten_call":null,"source":{"rule":"judge-shell","type":"model"}}
+{"at":"2026-11-07T08:12:42.338978+00:00","call_digest":"sha256:250a209806ea501e643c1d7ccb3f6a0dde645b81fa3dfbb6e0f75416440b9f92","decision":"allow","format":"portcullis-decision/2","interpreter":false,"model":{"confidence":0.93,"failure":null,"fallback":"none","model":"jev-1.13.0","probabilities":{"allow":0.93,"deny":0.03,"escalate":0.03,"other":0.01},"request_digest":"sha256:00a4c7cf0cc37f14cfb46e241d7a75ceab35f93a122ffaa634a3efa783e16253","risk_score":4.2,"verdict":"allow"},"reason":"shell calls whose safety turns on the stated task","rewritten_call":null,"source":{"rule":"judge-shell","type":"model"}}
 exit 0
 ```
 
@@ -140,7 +140,7 @@ portcullis check --policy judge-policy.json --log nojudge.jsonl call-judge.json
 ```
 
 ```
-{"at":"2026-11-07T06:28:18.347178+00:00","call_digest":"sha256:250a209806ea501e643c1d7ccb3f6a0dde645b81fa3dfbb6e0f75416440b9f92","decision":"escalate","format":"portcullis-decision/2","interpreter":false,"model":{"confidence":null,"failure":"no transport","fallback":"no transport","model":"jev-1.13.0","probabilities":null,"request_digest":"sha256:e2ac680d4f062f471ef518e2842718004cde79ea8de63a84908da31737baa69c","risk_score":null,"verdict":null},"reason":"shell calls whose safety turns on the stated task","rewritten_call":null,"source":{"rule":"judge-shell","type":"model"}}
+{"at":"2026-11-07T06:28:18.347178+00:00","call_digest":"sha256:250a209806ea501e643c1d7ccb3f6a0dde645b81fa3dfbb6e0f75416440b9f92","decision":"escalate","format":"portcullis-decision/2","interpreter":false,"model":{"confidence":null,"failure":"no transport","fallback":"no transport","model":"jev-1.13.0","probabilities":null,"request_digest":"sha256:00a4c7cf0cc37f14cfb46e241d7a75ceab35f93a122ffaa634a3efa783e16253","risk_score":null,"verdict":null},"reason":"shell calls whose safety turns on the stated task","rewritten_call":null,"source":{"rule":"judge-shell","type":"model"}}
 exit 1
 ```
 
@@ -155,7 +155,7 @@ portcullis audit --log audit.jsonl --sample 2
 ```
 
 ```
-{"counts":{"first_format":4,"lines":5,"ranked":1,"scored_not_allowed":0,"unscored":0},"format":"portcullis-audit/1","requested":2,"returned":1,"sample":[{"line":5,"rank":1,"record":{"at":"2026-11-07T08:12:42.338978+00:00","call_digest":"sha256:250a209806ea501e643c1d7ccb3f6a0dde645b81fa3dfbb6e0f75416440b9f92","decision":"allow","format":"portcullis-decision/2","interpreter":false,"model":{"confidence":0.93,"failure":null,"fallback":"none","model":"jev-1.13.0","probabilities":{"allow":0.93,"deny":0.03,"escalate":0.03,"other":0.01},"request_digest":"sha256:e2ac680d4f062f471ef518e2842718004cde79ea8de63a84908da31737baa69c","risk_score":4.2,"verdict":"allow"},"reason":"shell calls whose safety turns on the stated task","rewritten_call":null,"source":{"rule":"judge-shell","type":"model"}},"risk_score":4.2}]}
+{"counts":{"first_format":4,"lines":5,"ranked":1,"scored_not_allowed":0,"unscored":0},"format":"portcullis-audit/1","requested":2,"returned":1,"sample":[{"line":5,"rank":1,"record":{"at":"2026-11-07T08:12:42.338978+00:00","call_digest":"sha256:250a209806ea501e643c1d7ccb3f6a0dde645b81fa3dfbb6e0f75416440b9f92","decision":"allow","format":"portcullis-decision/2","interpreter":false,"model":{"confidence":0.93,"failure":null,"fallback":"none","model":"jev-1.13.0","probabilities":{"allow":0.93,"deny":0.03,"escalate":0.03,"other":0.01},"request_digest":"sha256:00a4c7cf0cc37f14cfb46e241d7a75ceab35f93a122ffaa634a3efa783e16253","risk_score":4.2,"verdict":"allow"},"reason":"shell calls whose safety turns on the stated task","rewritten_call":null,"source":{"rule":"judge-shell","type":"model"}},"risk_score":4.2}]}
 exit 0
 ```
 
