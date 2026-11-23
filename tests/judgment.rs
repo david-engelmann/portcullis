@@ -7,30 +7,37 @@
 //! Every test pins one claim of obligations PC-13 to PC-20 and
 //! can fail for a real reason.
 
-use std::cell::RefCell;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use portcullis::{
     call_digest, canonical, evaluate, evaluate_with_transport, load_policy, read_log, strict_parse,
-    FixtureTransport, JudgeTransport, SubprocessTransport, TransportError, Value,
+    FixtureTransport, JudgeTransport, SubprocessTransport, Value,
 };
+
+#[allow(dead_code)]
+mod common;
+use common::{field, root, run_cli, s, write_log_lines, StubTransport};
 
 const AT: &str = "2026-11-04T10:00:00+00:00";
 
-fn root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
-
 fn temp_dir(tag: &str) -> PathBuf {
-    let dir =
-        std::env::temp_dir().join(format!("portcullis-judgment-{}-{tag}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
+    common::temp_dir_with("portcullis-judgment", tag)
 }
 
-fn s(text: &str) -> Value {
-    Value::text(text)
+/// Read one named count line out of a manifest text, the
+/// number standing at the end of the line that carries the
+/// label. The population pins read the judgment MANIFEST's
+/// named counts through this one reader.
+fn named_count(text: &str, label: &str) -> usize {
+    let line = text
+        .lines()
+        .find(|line| line.contains(label))
+        .unwrap_or_else(|| panic!("the text carries no named count line for {label}"));
+    line.trim_end_matches('.')
+        .rsplit(' ')
+        .next()
+        .and_then(|digits| digits.parse::<usize>().ok())
+        .unwrap_or_else(|| panic!("the named count line for {label} carries no number"))
 }
 
 fn arr(items: Vec<Value>) -> Value {
@@ -89,49 +96,8 @@ fn shell_call(argv: &[&str]) -> Value {
     ])
 }
 
-fn field<'a>(doc: &'a Value, key: &str) -> &'a Value {
-    doc.get(key).unwrap()
-}
-
 fn model_field<'a>(doc: &'a Value, key: &str) -> &'a Value {
     field(doc, "model").get(key).unwrap()
-}
-
-/// A transport that records every request it is handed and
-/// answers with one canned outcome.
-struct StubTransport {
-    outcome: Result<String, String>,
-    requests: RefCell<Vec<Value>>,
-}
-
-impl StubTransport {
-    fn replying(body: &str) -> StubTransport {
-        StubTransport {
-            outcome: Ok(body.to_string()),
-            requests: RefCell::new(Vec::new()),
-        }
-    }
-
-    fn failing() -> StubTransport {
-        StubTransport {
-            outcome: Err("the stub transport failed".to_string()),
-            requests: RefCell::new(Vec::new()),
-        }
-    }
-
-    fn consulted(&self) -> usize {
-        self.requests.borrow().len()
-    }
-}
-
-impl JudgeTransport for StubTransport {
-    fn consult(&self, request: &Value) -> Result<String, TransportError> {
-        self.requests.borrow_mut().push(request.clone());
-        match &self.outcome {
-            Ok(body) => Ok(body.clone()),
-            Err(detail) => Err(TransportError(detail.clone())),
-        }
-    }
 }
 
 /// One reply body in the wire shape, with the carried
@@ -748,15 +714,6 @@ fn twin_replies_differing_only_in_score_differ_only_in_the_recorded_score() {
 
 // --- the second format record and its reader ---------------------------------
 
-fn write_log_lines(log_path: &Path, records: &[Value]) {
-    let mut text = String::new();
-    for record in records {
-        text.push_str(&String::from_utf8(canonical(record)).unwrap());
-        text.push('\n');
-    }
-    std::fs::write(log_path, text).unwrap();
-}
-
 fn valid_model_record() -> Value {
     decide_replying("queue", &allow_reply())
 }
@@ -1145,23 +1102,6 @@ fn a_judge_reply_that_is_not_text_lands_on_the_transport_fallback() {
 
 // --- the command line ------------------------------------------------------------
 
-struct CliOutput {
-    status: i32,
-    stdout: String,
-}
-
-fn run_cli(arguments: &[&str]) -> CliOutput {
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_portcullis"))
-        .args(arguments)
-        .current_dir(root())
-        .output()
-        .unwrap();
-    CliOutput {
-        status: output.status.code().unwrap_or(-1),
-        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-    }
-}
-
 fn cli_judge_setup(tag: &str, judge: Option<&str>) -> (PathBuf, PathBuf, PathBuf, Vec<String>) {
     let dir = temp_dir(tag);
     let policy_path = dir.join("policy.json");
@@ -1196,7 +1136,7 @@ fn cli_judge_setup(tag: &str, judge: Option<&str>) -> (PathBuf, PathBuf, PathBuf
 fn the_cli_decides_a_referral_on_the_no_transport_fallback_without_a_judge_command() {
     let (_, _, log_path, args) = cli_judge_setup("cli-no-judge", None);
     let arg_refs: Vec<&str> = args.iter().map(|arg| arg.as_str()).collect();
-    let result = run_cli(&arg_refs);
+    let result = run_cli(&arg_refs, None);
     assert_eq!(result.status, 1);
     let decision = strict_parse(result.stdout.trim_end()).unwrap();
     assert_eq!(field(&decision, "format"), &s("portcullis-decision/2"));
@@ -1223,7 +1163,7 @@ fn the_cli_consults_a_judge_command_and_an_escalate_exits_one() {
     let judge = format!("sh {}", script_path.to_str().unwrap());
     let (_, _, log_path, args) = cli_judge_setup("cli-judge", Some(&judge));
     let arg_refs: Vec<&str> = args.iter().map(|arg| arg.as_str()).collect();
-    let result = run_cli(&arg_refs);
+    let result = run_cli(&arg_refs, None);
     assert_eq!(result.status, 1);
     let decision = strict_parse(result.stdout.trim_end()).unwrap();
     assert_eq!(field(&decision, "decision"), &s("escalate"));
@@ -1236,7 +1176,7 @@ fn the_cli_consults_a_judge_command_and_an_escalate_exits_one() {
 fn the_cli_records_a_failing_judge_command_under_the_transport_class() {
     let (_, _, _, args) = cli_judge_setup("cli-judge-fails", Some("exit 3"));
     let arg_refs: Vec<&str> = args.iter().map(|arg| arg.as_str()).collect();
-    let result = run_cli(&arg_refs);
+    let result = run_cli(&arg_refs, None);
     assert_eq!(result.status, 1);
     let decision = strict_parse(result.stdout.trim_end()).unwrap();
     assert_eq!(field(&decision, "decision"), &s("escalate"));
@@ -1250,7 +1190,7 @@ fn the_cli_help_text_states_the_judge_protocol() {
     // text of the check command beside its usage line, so an
     // operator can implement a judge command from the binary
     // alone.
-    let result = run_cli(&["check", "--help"]);
+    let result = run_cli(&["check", "--help"], None);
     assert_eq!(result.status, 0);
     assert!(result.stdout.contains("usage: portcullis check"));
     assert!(result
@@ -1463,19 +1403,11 @@ fn the_gathered_families_stand_at_their_designed_population_shape() {
     // MANIFEST Round 18 section and read as numbers from those
     // lines. No count is parsed by token shape, so a case name
     // standing in a prose line is never read as a count.
-    let named_count = |label: &str| -> usize {
-        let line = manifest_text
-            .lines()
-            .find(|line| line.contains(label))
-            .unwrap_or_else(|| panic!("the MANIFEST carries no named count line for {label}"));
-        line.trim_end_matches('.')
-            .rsplit(' ')
-            .next()
-            .and_then(|digits| digits.parse::<usize>().ok())
-            .unwrap_or_else(|| panic!("the named count line for {label} carries no number"))
-    };
-    let missing = named_count("Named count, failure family j standing missing:");
-    let designed_total = named_count("Named count, designed population total:");
+    let missing = named_count(
+        &manifest_text,
+        "Named count, failure family j standing missing:",
+    );
+    let designed_total = named_count(&manifest_text, "Named count, designed population total:");
     assert_eq!(
         names.len(),
         designed_total - missing,
@@ -1505,12 +1437,12 @@ fn the_gathered_families_stand_at_their_designed_population_shape() {
     );
     assert_eq!(
         census("q"),
-        named_count("Named count, induced family q:"),
+        named_count(&manifest_text, "Named count, induced family q:"),
         "the induced family stands at the count its named line states"
     );
     assert_eq!(
         census("r"),
-        named_count("Named count, control family r:"),
+        named_count(&manifest_text, "Named count, control family r:"),
         "the control family stands at the count its named line states"
     );
 
@@ -1731,19 +1663,6 @@ fn the_induced_family_census_reads_the_named_count_lines() {
     let fixtures_dir = root().join("tests").join("fixtures").join("judgment");
     let manifest = std::fs::read_to_string(fixtures_dir.join("MANIFEST.md")).unwrap();
     let section18 = manifest.split("## Round 18").nth(1).unwrap().to_string();
-    let named_count = |label: &str| -> usize {
-        let line = section18
-            .lines()
-            .find(|line| line.contains(label))
-            .unwrap_or_else(|| {
-                panic!("the Round 18 section carries no named count line for {label}")
-            });
-        line.trim_end_matches('.')
-            .rsplit(' ')
-            .next()
-            .and_then(|digits| digits.parse::<usize>().ok())
-            .unwrap_or_else(|| panic!("the named count line for {label} carries no number"))
-    };
     let classes = [
         "silence",
         "malformed",
@@ -1766,14 +1685,14 @@ fn the_induced_family_census_reads_the_named_count_lines() {
         }
         assert_eq!(
             count,
-            named_count(&format!("Named count, induced class {class}:")),
+            named_count(&section18, &format!("Named count, induced class {class}:")),
             "the induced family records {count} presentations of class {class} against its named line"
         );
         family += count;
     }
     assert_eq!(
         family,
-        named_count("Named count, induced family q:"),
+        named_count(&section18, "Named count, induced family q:"),
         "the induced family records {family} presentations against its named line"
     );
 }

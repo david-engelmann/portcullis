@@ -9,6 +9,10 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+#[allow(dead_code)]
+mod common;
+use common::{field, root, run_cli, s, write_log_lines, CliOutput};
+
 use portcullis::{
     canonical, evaluate, load_policy, read_log, strict_parse, LogReadError, Match, Matcher, Policy,
     Rule, Value,
@@ -17,19 +21,8 @@ use sha2::{Digest, Sha256};
 
 const AT: &str = "2026-11-02T10:00:00+00:00";
 
-fn root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
-
 fn temp_dir(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("portcullis-test-{}-{tag}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
-}
-
-fn s(text: &str) -> Value {
-    Value::text(text)
+    common::temp_dir_with("portcullis-test", tag)
 }
 
 fn arr(items: Vec<Value>) -> Value {
@@ -118,10 +111,6 @@ fn decide(doc: &Value, rules: Vec<Value>, default: &str) -> Value {
     evaluate(Some(&policy), None, doc, AT)
 }
 
-fn field<'a>(doc: &'a Value, key: &str) -> &'a Value {
-    doc.get(key).unwrap()
-}
-
 fn write_json(path: &Path, document: &Value) -> PathBuf {
     std::fs::write(path, canonical(document)).unwrap();
     path.to_path_buf()
@@ -130,38 +119,6 @@ fn write_json(path: &Path, document: &Value) -> PathBuf {
 fn write_text(path: &Path, text: &str) -> PathBuf {
     std::fs::write(path, text).unwrap();
     path.to_path_buf()
-}
-
-struct CliOutput {
-    status: i32,
-    stdout: String,
-    stderr: String,
-}
-
-fn run_cli(arguments: &[&str], stdin_text: Option<&str>) -> CliOutput {
-    run_cli_bytes(arguments, stdin_text.map(|text| text.as_bytes().to_vec()))
-}
-
-fn run_cli_bytes(arguments: &[&str], stdin_bytes: Option<Vec<u8>>) -> CliOutput {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_portcullis"));
-    command
-        .args(arguments)
-        .current_dir(root())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    if stdin_bytes.is_some() {
-        command.stdin(Stdio::piped());
-    }
-    let mut child = command.spawn().unwrap();
-    if let Some(bytes) = stdin_bytes {
-        child.stdin.take().unwrap().write_all(&bytes).unwrap();
-    }
-    let output = child.wait_with_output().unwrap();
-    CliOutput {
-        status: output.status.code().unwrap_or(-1),
-        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-    }
 }
 
 fn parse_line(text: &str) -> Value {
@@ -1890,15 +1847,6 @@ fn an_interpreter_call_rewritten_to_a_harmless_call_stays_flagged() {
         &arr(vec![s("echo"), s("hi")])
     );
     assert_eq!(field(&decision, "interpreter"), &Value::Bool(true));
-}
-
-fn write_log_lines(log_path: &Path, records: &[Value]) {
-    let mut text = String::new();
-    for record in records {
-        text.push_str(&String::from_utf8(canonical(record)).unwrap());
-        text.push('\n');
-    }
-    std::fs::write(log_path, text).unwrap();
 }
 
 fn valid_allow_record() -> Value {
