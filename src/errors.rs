@@ -88,5 +88,3 @@ impl std::error::Error for LogReadError {
         }
     }
 }
-
-// --- the document model ------------------------------------------------
