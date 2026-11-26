@@ -910,3 +910,49 @@ def test_pc35_default_model_and_provider_codecs(tmp_path):
         )
     with pytest.raises(portcullis.CallerError):
         portcullis.detect_provider("\ud800")
+
+
+def test_pc36_path2_matching_through_the_binding(tmp_path):
+    policy = {
+        "format": "portcullis-policy/1",
+        "default": "allow",
+        "rules": [
+            {
+                "id": "deny-etc-move",
+                "kind": "file",
+                "action": "deny",
+                "reason": "no moving files into etc",
+                "match": {"path2": {"prefix": "/etc/"}},
+            }
+        ],
+    }
+    log = tmp_path / "pc36.jsonl"
+    denied = portcullis.check(
+        policy,
+        {
+            "format": "portcullis-call/1",
+            "kind": "file",
+            "operation": "move",
+            "path": "/work/draft.conf",
+            "path2": "/work/../etc/hosts",
+        },
+        log,
+        AT,
+    )
+    assert denied["decision"] == "deny"
+    assert denied["source"] == {"type": "rule", "rule": "deny-etc-move"}
+
+    allowed_read = portcullis.check(
+        policy,
+        {
+            "format": "portcullis-call/1",
+            "kind": "file",
+            "operation": "read",
+            "path": "/etc/hosts",
+        },
+        log,
+        AT,
+    )
+    assert allowed_read["decision"] == "allow"
+    assert allowed_read["source"] == {"type": "default"}
+
