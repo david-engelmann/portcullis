@@ -965,6 +965,9 @@ fn a_network_referral_states_the_validated_explicit_form_of_a_url_call() {
 
 // --- the subprocess transport ----------------------------------------------------
 
+// Gated to Unix as a mechanical consequence of Windows portability
+// because the command string uses POSIX shell utilities and /dev/zero.
+#[cfg(unix)]
 #[test]
 fn a_judge_command_writing_past_the_reply_bound_lands_on_the_transport_fallback() {
     let doc = shell_judge_policy(0.75, "queue");
@@ -982,6 +985,9 @@ fn a_judge_command_writing_past_the_reply_bound_lands_on_the_transport_fallback(
     assert_eq!(model_field(&decision, "failure"), &s("transport"));
 }
 
+// Gated to Unix as a mechanical consequence of Windows portability
+// because the command string uses POSIX background job syntax and cat.
+#[cfg(unix)]
 #[test]
 fn a_judge_channel_held_open_past_the_bound_lands_on_the_transport_fallback() {
     // The command reads the request, prints its reply, and
@@ -1020,6 +1026,9 @@ fn one_captured_request() -> Value {
     requests[0].clone()
 }
 
+// Gated to Unix as a mechanical consequence of Windows portability
+// because the command string invokes the POSIX sleep utility.
+#[cfg(unix)]
 #[test]
 fn a_judge_command_that_never_answers_is_named_by_its_own_error() {
     // The command is still running at the bound and is
@@ -1033,6 +1042,9 @@ fn a_judge_command_that_never_answers_is_named_by_its_own_error() {
     assert_eq!(error.0, "the judge command did not answer inside the bound");
 }
 
+// Gated to Unix as a mechanical consequence of Windows portability
+// because the command string uses POSIX background job syntax and cat.
+#[cfg(unix)]
 #[test]
 fn a_judge_reply_channel_held_open_is_named_by_its_own_error() {
     // The command reads the request, prints its reply, and
@@ -1079,6 +1091,9 @@ fn a_judge_command_that_cannot_be_started_lands_on_the_transport_fallback() {
     assert_eq!(model_field(&decision, "failure"), &s("transport"));
 }
 
+// Gated to Unix as a mechanical consequence of Windows portability
+// because the command string uses /dev/null and POSIX octal printf.
+#[cfg(unix)]
 #[test]
 fn a_judge_reply_that_is_not_text_lands_on_the_transport_fallback() {
     // The command answers with bytes that are not text, and
@@ -1104,6 +1119,9 @@ fn a_judge_reply_that_is_not_text_lands_on_the_transport_fallback() {
     assert_eq!(model_field(&decision, "failure"), &s("transport"));
 }
 
+// Gated to Unix as a mechanical consequence of Windows portability
+// because the command string uses /dev/null and POSIX printf.
+#[cfg(unix)]
 #[test]
 fn a_judge_command_that_answers_and_then_fails_lands_on_the_transport_fallback() {
     // The command drains the request, prints the whole
@@ -1181,6 +1199,10 @@ fn the_cli_decides_a_referral_on_the_no_transport_fallback_without_a_judge_comma
     assert_eq!(read_log(&log_path).unwrap().len(), 1);
 }
 
+// Gated to Unix as a mechanical consequence of Windows portability
+// because the test invokes a POSIX sh script, paired with the Windows
+// cmd judge pin immediately below.
+#[cfg(unix)]
 #[test]
 fn the_cli_consults_a_judge_command_and_an_escalate_exits_one() {
     let dir = temp_dir("cli-judge-script");
@@ -1198,6 +1220,25 @@ fn the_cli_consults_a_judge_command_and_an_escalate_exits_one() {
     .unwrap();
     let judge = format!("sh {}", script_path.to_str().unwrap());
     let (_, _, log_path, args) = cli_judge_setup("cli-judge", Some(&judge));
+    let arg_refs: Vec<&str> = args.iter().map(|arg| arg.as_str()).collect();
+    let result = run_cli(&arg_refs, None);
+    assert_eq!(result.status, 1);
+    let decision = strict_parse(result.stdout.trim_end()).unwrap();
+    assert_eq!(field(&decision, "decision"), &s("escalate"));
+    assert_eq!(model_field(&decision, "verdict"), &s("escalate"));
+    assert_eq!(model_field(&decision, "fallback"), &s("none"));
+    assert_eq!(read_log(&log_path).unwrap().len(), 1);
+}
+
+#[cfg(windows)]
+#[test]
+fn the_cli_consults_a_judge_command_on_windows_and_an_escalate_exits_one() {
+    let dir = temp_dir("cli-judge-cmd");
+    let reply_path = dir.join("reply.json");
+    let body = reply_body("escalate", [0.1, 0.1, 0.7, 0.1], 0.5, Some(2.0));
+    std::fs::write(&reply_path, &body).unwrap();
+    let judge = format!("more >nul & type \"{}\"", reply_path.display());
+    let (_, _, log_path, args) = cli_judge_setup("cli-judge-win", Some(&judge));
     let arg_refs: Vec<&str> = args.iter().map(|arg| arg.as_str()).collect();
     let result = run_cli(&arg_refs, None);
     assert_eq!(result.status, 1);

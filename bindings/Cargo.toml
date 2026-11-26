@@ -9,6 +9,9 @@ license = "MIT"
 name = "portcullis"
 crate-type = ["cdylib", "rlib"]
 
+[features]
+extension-module = ["pyo3/extension-module"]
+
 [dependencies]
 portcullis-core = { package = "portcullis", path = ".." }
-pyo3 = { version = "0.30", features = ["extension-module", "abi3-py39"] }
+pyo3 = { version = "0.30", features = ["abi3-py39"] }

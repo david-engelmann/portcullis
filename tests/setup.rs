@@ -304,6 +304,37 @@ fn ci_credential_hygiene_catches_a_second_unpinned_toolchain_line() {
 }
 
 #[test]
+fn portability_workflow_carries_the_fleet_credential_hygiene() {
+    let text = read(".github/workflows/portability.yml").replace("\r\n", "\n");
+    assert!(text.contains("permissions:\n  contents: read"));
+    assert!(!text.contains("write-all"));
+    assert!(!text.contains("contents: write"));
+    assert!(!text.contains("rust-toolchain@master"));
+    let lines: Vec<&str> = text.lines().collect();
+    let mut checkout_count = 0;
+    for (idx, line) in lines.iter().enumerate() {
+        if line.contains("actions/checkout") {
+            checkout_count += 1;
+            let block: Vec<&&str> = lines[idx + 1..]
+                .iter()
+                .take_while(|l| l.trim().is_empty() || !l.trim_start().starts_with("- "))
+                .collect();
+            assert!(
+                block
+                    .iter()
+                    .any(|l| l.trim() == "persist-credentials: false"),
+                "checkout step at line {idx} lacks persist-credentials false"
+            );
+        }
+    }
+    assert!(checkout_count >= 2);
+    assert!(lines
+        .iter()
+        .any(|line| line.contains("dtolnay/rust-toolchain@")));
+    assert!(unpinned_toolchain_lines(&text).is_empty());
+}
+
+#[test]
 fn ci_gate_parser_skips_a_step_disabled_with_if_false() {
     let ci_text = read(".github/workflows/ci.yml");
     let gate_step = "      - name: Run the local gate\n        run: cargo test";
@@ -563,27 +594,124 @@ fn codepoint_scan_refuses_a_root_that_does_not_stand() {
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn the_scanner_answers_a_failed_output_write_with_exit_two() {
     // The scanner's lines travel through a checked writer, so
     // an output stream that refuses the write is a scan error
     // at exit 2. On the standing code the hit line's print
     // macro panics on the failed write and the process dies
-    // at 101.
+    // at 101. Uses common dead_stream as a mechanical consequence
+    // of macOS and Windows portability where /dev/full is absent.
     let root = temp_dir("codepoint-full");
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(root.join("dash.txt"), "before \u{2014} after\n").unwrap();
-    let full = std::fs::OpenOptions::new()
-        .write(true)
-        .open("/dev/full")
-        .unwrap();
+    let full = common::dead_stream();
     let output = Command::new(env!("CARGO_BIN_EXE_codepoint_scan"))
         .arg(&root)
-        .stdout(std::process::Stdio::from(full))
+        .stdout(full)
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(2));
+}
+
+#[test]
+fn codepoint_scan_extra_argument_on_dead_stderr_exits_two() {
+    let dir = temp_dir("extra-argument-dead-stderr");
+    std::fs::write(dir.join("clean.md"), "clean").unwrap();
+    let dead = common::dead_stream();
+    let output = Command::new(env!("CARGO_BIN_EXE_codepoint_scan"))
+        .arg(&dir)
+        .arg("second-root")
+        .stderr(dead)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+}
+
+#[test]
+fn codepoint_scan_counts_both_dashes_in_one_tree() {
+    let dir = temp_dir("both-dashes");
+    std::fs::write(dir.join("alpha.md"), "a\u{2014}b\u{2014}c\u{2013}d").unwrap();
+    std::fs::write(dir.join("beta.md"), "a\u{2014}b").unwrap();
+    let result = scan_tree(&dir);
+    assert_eq!(result.status, 1);
+    let expected = format!(
+        "{}: em dash 2, en dash 1\n{}: em dash 1, en dash 0\nem dash U+2014 count 3\nen dash U+2013 count 1\n",
+        dir.join("alpha.md").display(),
+        dir.join("beta.md").display()
+    );
+    assert_eq!(result.stdout, expected);
+}
+
+#[test]
+fn codepoint_scan_skips_every_excluded_dir_below_the_root() {
+    let dir = temp_dir("excluded-dirs-all");
+    std::fs::write(dir.join("clean.md"), "clean").unwrap();
+    for name in [
+        ".git",
+        "__pycache__",
+        ".pytest_cache",
+        ".venv",
+        "venv",
+        "node_modules",
+        "build",
+        "dist",
+        "target",
+    ] {
+        let excluded = dir.join(name);
+        std::fs::create_dir_all(&excluded).unwrap();
+        std::fs::write(excluded.join("note.md"), "a\u{2014}b").unwrap();
+    }
+    let result = scan_tree(&dir);
+    assert_eq!(result.status, 0);
+    assert!(result.stdout.contains("em dash U+2014 count 0"));
+    assert!(result.stdout.contains("en dash U+2013 count 0"));
+    let control = temp_dir("excluded-dirs-all-control");
+    let inside = control.join("real-dir");
+    std::fs::create_dir_all(&inside).unwrap();
+    std::fs::write(inside.join("note.md"), "a\u{2014}b").unwrap();
+    let result = scan_tree(&control);
+    assert_eq!(result.status, 1);
+    assert!(result.stdout.contains("em dash U+2014 count 1"));
+}
+
+#[test]
+fn codepoint_scan_skips_every_binary_suffix() {
+    let dir = temp_dir("binary-suffixes-all");
+    for suffix in [
+        "png", "jpg", "jpeg", "gif", "ico", "webp", "pdf", "zip", "gz", "tar", "whl", "so", "dylib",
+    ] {
+        std::fs::write(dir.join(format!("sample.{suffix}")), "a\u{2014}b").unwrap();
+    }
+    let result = scan_tree(&dir);
+    assert_eq!(result.status, 0);
+    assert!(result.stdout.contains("em dash U+2014 count 0"));
+    assert!(result.stdout.contains("en dash U+2013 count 0"));
+    let control = temp_dir("binary-suffixes-all-control");
+    std::fs::write(control.join("note.md"), "a\u{2014}b").unwrap();
+    let result = scan_tree(&control);
+    assert_eq!(result.status, 1);
+    assert!(result.stdout.contains("em dash U+2014 count 1"));
+}
+
+#[cfg(unix)]
+#[test]
+fn codepoint_scan_skips_a_fifo_and_terminates() {
+    let dir = temp_dir("fifo");
+    std::fs::write(dir.join("clean.md"), "clean").unwrap();
+    common::mkfifo(&dir.join("planted-pipe"));
+    let (tx, rx) = std::sync::mpsc::channel();
+    let scan_root = dir.clone();
+    std::thread::spawn(move || {
+        let _ = tx.send(scan_tree(&scan_root));
+    });
+    let result = rx
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("the scan terminated without blocking on the FIFO");
+    assert_eq!(result.status, 0, "{}", result.stderr);
+    assert!(result.stdout.contains("em dash U+2014 count 0"));
+    assert!(result.stdout.contains("en dash U+2013 count 0"));
 }
 
 fn scan_current_dir(dir: &Path) -> ScanOutput {
@@ -618,6 +746,30 @@ fn codepoint_scan_defaults_to_the_current_directory() {
     assert!(result.stdout.contains("note.md"), "{}", result.stdout);
 }
 
+#[cfg(unix)]
+#[test]
+fn codepoint_scan_skips_a_symlink_to_a_fifo_and_terminates() {
+    let outside = temp_dir("fifo-outside");
+    let fifo = outside.join("target-pipe");
+    common::mkfifo(&fifo);
+    let dir = temp_dir("symlink-to-fifo");
+    std::fs::write(dir.join("clean.md"), "clean").unwrap();
+    std::os::unix::fs::symlink(&fifo, dir.join("linked-pipe")).unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let scan_root = dir.clone();
+    std::thread::spawn(move || {
+        let _ = tx.send(scan_tree(&scan_root));
+    });
+    let result = rx
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("the scan terminated without blocking on the symlinked FIFO");
+    assert_eq!(result.status, 0, "{}", result.stderr);
+    assert!(result.stdout.contains("em dash U+2014 count 0"));
+    assert!(result.stdout.contains("en dash U+2013 count 0"));
+}
+
+// Gated to Unix as a mechanical consequence of Windows portability
+// because staging uses std::os::unix::fs::symlink without privilege.
 #[cfg(unix)]
 #[test]
 fn codepoint_scan_refuses_a_file_that_cannot_be_read() {

@@ -108,3 +108,34 @@ impl JudgeTransport for StubTransport {
         }
     }
 }
+
+/// Open a writable stream whose writes deterministically fail across
+/// platforms. Prefers /dev/full where present on Linux and falls back
+/// to the write end of an anonymous pipe whose read end is already
+/// closed on macOS and Windows, proving a probe write fails first.
+#[allow(dead_code)]
+pub fn dead_stream() -> Stdio {
+    if let Ok(mut full) = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/full")
+    {
+        if full.write_all(b"probe").is_err() {
+            return Stdio::from(full);
+        }
+    }
+    let (reader, mut writer) = std::io::pipe().expect("pipe creation failed");
+    drop(reader);
+    assert!(
+        writer.write_all(b"probe").is_err(),
+        "probe write to closed pipe must fail"
+    );
+    Stdio::from(writer)
+}
+
+#[cfg(unix)]
+#[allow(dead_code)]
+pub fn mkfifo(path: &Path) {
+    let status = Command::new("mkfifo").arg(path).status().unwrap();
+    assert!(status.success(), "mkfifo failed for {}", path.display());
+}

@@ -251,75 +251,147 @@ fn key_text(key: &Bound<'_, PyAny>) -> Result<String, ConvertError> {
     }
 }
 
-/// The items of one Python sequence, a list or a tuple, as
-/// one document array, each item converted at the depth
-/// below the sequence itself.
-fn sequence_value<'py, I>(items: I, len: usize, depth: usize) -> Result<Value, ConvertError>
-where
-    I: Iterator<Item = Bound<'py, PyAny>>,
-{
-    let mut converted = Vec::with_capacity(len);
-    for item in items {
-        converted.push(to_value(&item, depth + 1)?);
-    }
-    Ok(Value::Array(converted))
+enum Container<'py> {
+    Array {
+        depth: usize,
+        out: Vec<Value>,
+        rest: std::vec::IntoIter<Bound<'py, PyAny>>,
+    },
+    Object {
+        depth: usize,
+        out: Vec<(String, Value)>,
+        pending_key: String,
+        rest: std::vec::IntoIter<(Bound<'py, PyAny>, Bound<'py, PyAny>)>,
+    },
 }
 
 /// One Python value as a document in the library's model.
 ///
 /// The depth bound mirrors the reader's, and it is also what
-/// keeps a value that contains itself from recursing without
-/// end. Tuples cross as arrays beside lists, a recorded
-/// widening of shape only, since a tuple is an immutable list
-/// to the caller and the document it becomes is the same.
-fn to_value(value: &Bound<'_, PyAny>, depth: usize) -> Result<Value, ConvertError> {
-    if depth > MAX_DEPTH {
-        return Err(ConvertError::Reader(TOO_DEEP_TEXT.to_string()));
-    }
-    if value.is_none() {
-        return Ok(Value::Null);
-    }
-    if value.is_instance_of::<PyBool>() {
-        let flag: bool = value.extract().map_err(|_| {
-            ConvertError::Type("a boolean in the document could not be read".to_string())
-        })?;
-        return Ok(Value::Bool(flag));
-    }
-    if value.is_instance_of::<PyInt>() {
-        return integer_value(value);
-    }
-    if value.is_instance_of::<PyFloat>() {
-        let number: f64 = value.extract().map_err(|_| {
-            ConvertError::Type("a number in the document could not be read".to_string())
-        })?;
-        if number.is_nan() {
-            return Err(ConvertError::Reader(DOES_NOT_PARSE_TEXT.to_string()));
+/// keeps a value that contains itself from walking without
+/// end. An explicit heap work stack keeps deep documents up to
+/// MAX_DEPTH from overflowing narrow host thread stacks such as
+/// the 1 MiB default stack on Windows Python. Tuples cross as
+/// arrays beside lists, a recorded widening of shape only, since
+/// a tuple is an immutable list to the caller and the document
+/// it becomes is the same.
+fn to_value(value: &Bound<'_, PyAny>, initial_depth: usize) -> Result<Value, ConvertError> {
+    let mut stack: Vec<Container<'_>> = Vec::new();
+    let mut current = (value.clone(), initial_depth);
+    'descend: loop {
+        let (item, depth) = current;
+        if depth > MAX_DEPTH {
+            return Err(ConvertError::Reader(TOO_DEEP_TEXT.to_string()));
         }
-        return Ok(Value::Float(number));
-    }
-    if let Ok(text) = value.cast::<PyString>() {
-        return match text.extract::<String>() {
-            Ok(text) => Ok(Value::Str(text)),
-            Err(_) => Err(ConvertError::Reader(NOT_ENCODABLE_TEXT.to_string())),
+        let mut finished = if item.is_none() {
+            Value::Null
+        } else if item.is_instance_of::<PyBool>() {
+            let flag: bool = item.extract().map_err(|_| {
+                ConvertError::Type("a boolean in the document could not be read".to_string())
+            })?;
+            Value::Bool(flag)
+        } else if item.is_instance_of::<PyInt>() {
+            integer_value(&item)?
+        } else if item.is_instance_of::<PyFloat>() {
+            let number: f64 = item.extract().map_err(|_| {
+                ConvertError::Type("a number in the document could not be read".to_string())
+            })?;
+            if number.is_nan() {
+                return Err(ConvertError::Reader(DOES_NOT_PARSE_TEXT.to_string()));
+            }
+            Value::Float(number)
+        } else if let Ok(text) = item.cast::<PyString>() {
+            match text.extract::<String>() {
+                Ok(text) => Value::Str(text),
+                Err(_) => return Err(ConvertError::Reader(NOT_ENCODABLE_TEXT.to_string())),
+            }
+        } else if let Ok(list) = item.cast::<PyList>() {
+            let items: Vec<Bound<'_, PyAny>> = list.iter().collect();
+            let mut rest = items.into_iter();
+            if let Some(first) = rest.next() {
+                stack.push(Container::Array {
+                    depth,
+                    out: Vec::with_capacity(list.len()),
+                    rest,
+                });
+                current = (first, depth + 1);
+                continue 'descend;
+            }
+            Value::Array(Vec::new())
+        } else if let Ok(tuple) = item.cast::<PyTuple>() {
+            let items: Vec<Bound<'_, PyAny>> = tuple.iter().collect();
+            let mut rest = items.into_iter();
+            if let Some(first) = rest.next() {
+                stack.push(Container::Array {
+                    depth,
+                    out: Vec::with_capacity(tuple.len()),
+                    rest,
+                });
+                current = (first, depth + 1);
+                continue 'descend;
+            }
+            Value::Array(Vec::new())
+        } else if let Ok(dict) = item.cast::<PyDict>() {
+            let entries: Vec<(Bound<'_, PyAny>, Bound<'_, PyAny>)> = dict.iter().collect();
+            let mut rest = entries.into_iter();
+            if let Some((first_key, first_val)) = rest.next() {
+                let pending_key = key_text(&first_key)?;
+                stack.push(Container::Object {
+                    depth,
+                    out: Vec::with_capacity(dict.len()),
+                    pending_key,
+                    rest,
+                });
+                current = (first_val, depth + 1);
+                continue 'descend;
+            }
+            Value::Object(Vec::new())
+        } else {
+            return Err(ConvertError::Type(format!(
+                "a value of type {} is not a document value",
+                type_name(&item)
+            )));
         };
-    }
-    if let Ok(list) = value.cast::<PyList>() {
-        return sequence_value(list.iter(), list.len(), depth);
-    }
-    if let Ok(tuple) = value.cast::<PyTuple>() {
-        return sequence_value(tuple.iter(), tuple.len(), depth);
-    }
-    if let Ok(dict) = value.cast::<PyDict>() {
-        let mut pairs = Vec::with_capacity(dict.len());
-        for (key, item) in dict.iter() {
-            pairs.push((key_text(&key)?, to_value(&item, depth + 1)?));
+
+        loop {
+            let Some(top) = stack.last_mut() else {
+                return Ok(finished);
+            };
+            match top {
+                Container::Array { depth, out, rest } => {
+                    out.push(finished);
+                    if let Some(next_item) = rest.next() {
+                        let next_depth = *depth + 1;
+                        current = (next_item, next_depth);
+                        continue 'descend;
+                    }
+                    let Some(Container::Array { out, .. }) = stack.pop() else {
+                        unreachable!()
+                    };
+                    finished = Value::Array(out);
+                }
+                Container::Object {
+                    depth,
+                    out,
+                    pending_key,
+                    rest,
+                } => {
+                    let key = std::mem::take(pending_key);
+                    out.push((key, finished));
+                    if let Some((next_key, next_val)) = rest.next() {
+                        *pending_key = key_text(&next_key)?;
+                        let next_depth = *depth + 1;
+                        current = (next_val, next_depth);
+                        continue 'descend;
+                    }
+                    let Some(Container::Object { out, .. }) = stack.pop() else {
+                        unreachable!()
+                    };
+                    finished = Value::Object(out);
+                }
+            }
         }
-        return Ok(Value::Object(pairs));
     }
-    Err(ConvertError::Type(format!(
-        "a value of type {} is not a document value",
-        type_name(value)
-    )))
 }
 
 /// Build one Python dictionary from a document's pairs, the

@@ -24,12 +24,12 @@
 //! never exclude the root itself, and every file the walk reaches
 //! is scanned, whatever its name or suffix, apart from the known
 //! binary suffixes, and a file that does not decode as UTF-8 fails
-//! the scan loudly instead of passing unseen. Two limits of the
-//! walk stand named rather than fixed, exactly as they stood under
-//! the setup scanner. A directory that stands in the tree only as
-//! a symlink is not descended into, so the files beneath it pass
-//! unscanned, and a FIFO standing in the tree blocks the read that
-//! reaches it.
+//! the scan loudly instead of passing unseen. Special files such as
+//! FIFOs, sockets, and devices are skipped so a gate step never blocks
+//! on a read that cannot finish. A directory that stands in the tree
+//! only as a symlink is not descended into, while any other symlink is
+//! collected so a link to a regular file is scanned and a dangling link
+//! fails the read at exit 2.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -74,7 +74,13 @@ fn collect(root: &Path, out: &mut Vec<PathBuf>) -> Result<(), ScanError> {
             .map_err(|err| ScanError(format!("cannot read {}, {err}", path.display())))?;
         if file_type.is_dir() {
             dirs.push(path);
-        } else if !file_type.is_symlink() || !path.is_dir() {
+        } else if file_type.is_file()
+            || (file_type.is_symlink()
+                && match std::fs::metadata(&path) {
+                    Ok(meta) => meta.is_file(),
+                    Err(_) => true,
+                })
+        {
             files.push(path);
         }
     }
@@ -109,8 +115,15 @@ fn scan(root: &Path) -> Result<(usize, usize, String), ScanError> {
         let text = std::str::from_utf8(&bytes).map_err(|err| {
             ScanError(format!("cannot decode {} as UTF-8, {err}", path.display()))
         })?;
-        let file_em = text.matches(EM_DASH).count();
-        let file_en = text.matches(EN_DASH).count();
+        let mut file_em = 0;
+        let mut file_en = 0;
+        for ch in text.chars() {
+            if ch == EM_DASH {
+                file_em += 1;
+            } else if ch == EN_DASH {
+                file_en += 1;
+            }
+        }
         if file_em > 0 || file_en > 0 {
             report.push_str(&format!(
                 "{}: em dash {file_em}, en dash {file_en}\n",
@@ -147,10 +160,10 @@ fn print_error(text: &str) {
 
 fn main() -> ExitCode {
     if let Some(extra) = std::env::args_os().nth(2) {
-        eprintln!(
+        print_error(&format!(
             "scan error, unexpected argument {}",
             PathBuf::from(extra).display()
-        );
+        ));
         return ExitCode::from(2);
     }
     let root = std::env::args_os()

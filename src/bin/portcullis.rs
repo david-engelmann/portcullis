@@ -351,7 +351,22 @@ fn split_inline(token: &OsString) -> (String, Option<OsString>) {
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn split_inline(token: &OsString) -> (String, Option<OsString>) {
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    let units: Vec<u16> = token.encode_wide().collect();
+    match units.iter().position(|unit| *unit == b'=' as u16) {
+        Some(at) => (
+            OsString::from_wide(&units[..at])
+                .to_string_lossy()
+                .into_owned(),
+            Some(OsString::from_wide(&units[at + 1..])),
+        ),
+        None => (token.to_string_lossy().into_owned(), None),
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
 fn split_inline(token: &OsString) -> (String, Option<OsString>) {
     let text = token.to_string_lossy().into_owned();
     match text.split_once('=') {

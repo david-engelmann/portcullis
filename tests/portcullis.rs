@@ -2404,6 +2404,66 @@ fn an_inline_option_value_keeps_its_os_bytes() {
     log_name.extend_from_slice(&[0xFF, b'.', b'l', b'o', b'g']);
     let log_os = std::ffi::OsString::from_vec(log_name);
     let log_path = PathBuf::from(&log_os);
+    // Filesystems such as macOS APFS reject non-UTF-8 filenames at open
+    // with EILSEQ, so probe whether the host directory accepts raw-byte
+    // names before driving the file-creating check.
+    if std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&log_path)
+        .is_err()
+    {
+        return;
+    }
+    let _ = std::fs::remove_file(&log_path);
+    let mut policy_arg = std::ffi::OsString::from("--policy=");
+    policy_arg.push(&policy_path);
+    let mut log_arg = std::ffi::OsString::from("--log=");
+    log_arg.push(&log_os);
+    let output = Command::new(env!("CARGO_BIN_EXE_portcullis"))
+        .arg("check")
+        .arg(policy_arg)
+        .arg(log_arg)
+        .arg(&call_path)
+        .current_dir(root())
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0));
+    assert!(log_path.exists());
+    assert_eq!(read_log(&log_path).unwrap().len(), 1);
+}
+
+#[cfg(windows)]
+#[test]
+fn an_inline_option_value_keeps_its_wide_units_on_windows() {
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    let dir = temp_dir("inline-wide-log");
+    let policy = policy_doc(
+        vec![plain_rule(
+            "allow-ls",
+            "shell",
+            "allow",
+            Value::obj(vec![("argv0", matcher("exact", "ls"))]),
+        )],
+        "deny",
+    );
+    let policy_path = write_json(&dir.join("policy.json"), &policy);
+    let call_path = write_json(&dir.join("call.json"), &shell_call(&["ls"]));
+    let mut wide_name: Vec<u16> = dir.join("audit-").as_os_str().encode_wide().collect();
+    wide_name.extend_from_slice(&[0xD800, b'.' as u16, b'l' as u16, b'o' as u16, b'g' as u16]);
+    let log_os = std::ffi::OsString::from_wide(&wide_name);
+    let log_path = PathBuf::from(&log_os);
+    if std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&log_path)
+        .is_err()
+    {
+        return;
+    }
+    let _ = std::fs::remove_file(&log_path);
     let mut policy_arg = std::ffi::OsString::from("--policy=");
     policy_arg.push(&policy_path);
     let mut log_arg = std::ffi::OsString::from("--log=");
@@ -2935,19 +2995,16 @@ fn the_help_option_with_an_empty_inline_value_refuses_at_exit_two() {
     );
 }
 
-#[cfg(unix)]
 fn run_cli_with_dead_stdout(arguments: &[&str]) -> CliOutput {
-    // Run the binary with its standard output staged at
-    // /dev/full, whose writes always fail, and its error
-    // stream captured, answering the exit and the error text.
-    let full = std::fs::OpenOptions::new()
-        .write(true)
-        .open("/dev/full")
-        .unwrap();
+    // Run the binary with its standard output staged at a failing
+    // stream (/dev/full on Linux, closed-reader pipe on macOS and
+    // Windows) and its error stream captured, answering the exit and
+    // error text as a mechanical consequence of cross-platform gating.
+    let full = common::dead_stream();
     let output = Command::new(env!("CARGO_BIN_EXE_portcullis"))
         .args(arguments)
         .current_dir(root())
-        .stdout(Stdio::from(full))
+        .stdout(full)
         .stderr(Stdio::piped())
         .output()
         .unwrap();
@@ -2958,7 +3015,6 @@ fn run_cli_with_dead_stdout(arguments: &[&str]) -> CliOutput {
     }
 }
 
-#[cfg(unix)]
 #[test]
 fn a_decision_that_could_not_be_printed_answers_two_and_stands_appended() {
     // Preservation pin, the decision of PC-A69. The check
@@ -2998,7 +3054,6 @@ fn a_decision_that_could_not_be_printed_answers_two_and_stands_appended() {
     assert_eq!(field(&records[0], "decision"), &s("allow"));
 }
 
-#[cfg(unix)]
 #[test]
 fn an_audit_log_that_could_not_be_printed_answers_two() {
     // Preservation pin, the decision of PC-A69. The log
@@ -3022,7 +3077,6 @@ fn an_audit_log_that_could_not_be_printed_answers_two() {
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn an_audit_report_that_could_not_be_printed_answers_two() {
     // Preservation pin, the decision of PC-A69. The audit
@@ -3132,28 +3186,23 @@ fn evaluation_continues_past_a_hand_built_rewrite_rule_without_a_substitute() {
     assert_eq!(field(&decision, "rewritten_call"), &Value::Null);
 }
 
-#[cfg(unix)]
 fn run_cli_with_a_full_stream(arguments: &[&str], stream: &str) -> i32 {
-    // Run the binary with one of its streams staged at
-    // /dev/full, whose writes always fail, and answer the exit
-    // code. The pins below hold the exits the error handling
-    // repair promises on a dead stream.
-    let full = std::fs::OpenOptions::new()
-        .write(true)
-        .open("/dev/full")
-        .unwrap();
+    // Run the binary with one of its streams staged at a failing
+    // stream (/dev/full on Linux, closed-reader pipe on macOS and
+    // Windows) and answer the exit code as a mechanical consequence
+    // of cross-platform gating.
+    let full = common::dead_stream();
     let mut command = Command::new(env!("CARGO_BIN_EXE_portcullis"));
     command.args(arguments).current_dir(root());
     if stream == "stdout" {
-        command.stdout(Stdio::from(full));
+        command.stdout(full);
     } else {
-        command.stderr(Stdio::from(full));
+        command.stderr(full);
     }
     let output = command.output().unwrap();
     output.status.code().unwrap_or(-1)
 }
 
-#[cfg(unix)]
 #[test]
 fn a_caller_error_on_a_dead_error_stream_still_exits_two() {
     // The caller error line travels through the fallible
@@ -3178,7 +3227,6 @@ fn a_caller_error_on_a_dead_error_stream_still_exits_two() {
     assert_eq!(status, 2);
 }
 
-#[cfg(unix)]
 #[test]
 fn a_corrupt_log_on_a_dead_error_stream_still_exits_one() {
     let dir = temp_dir("dead-stderr-corrupt");
@@ -3198,7 +3246,6 @@ fn a_corrupt_log_on_a_dead_error_stream_still_exits_one() {
     assert_eq!(status, 1);
 }
 
-#[cfg(unix)]
 #[test]
 fn an_argument_error_on_a_dead_error_stream_still_exits_two() {
     let dir = temp_dir("dead-stderr-args");
@@ -3422,4 +3469,23 @@ fn a_port_matcher_of_the_wrong_shape_names_itself_in_the_refusal() {
             "the match of rule bad-port on the port is not a port matcher holding one exact port"
         ),
     }
+}
+
+#[test]
+fn canonical_and_drop_at_one_thousand_levels_run_on_a_narrow_stack() {
+    let handle = std::thread::Builder::new()
+        .stack_size(256 * 1024)
+        .spawn(|| {
+            let mut value = Value::int(1);
+            for _ in 0..1000 {
+                value = Value::Array(vec![value]);
+            }
+            let bytes = canonical(&value);
+            assert_eq!(bytes.len(), 2001);
+            assert!(bytes.starts_with(b"[[["));
+            assert!(bytes.ends_with(b"]]]"));
+            drop(value);
+        })
+        .unwrap();
+    handle.join().unwrap();
 }
