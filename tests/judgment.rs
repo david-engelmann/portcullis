@@ -153,16 +153,30 @@ fn a_judge_rule_with_no_judgment_block_refuses_the_policy() {
 
 #[test]
 fn a_judgment_block_naming_another_model_refuses_the_policy() {
-    let mut doc = shell_judge_policy(0.75, "queue");
-    let block = Value::obj(vec![
-        ("model", s("some-other-model")),
-        ("threshold", Value::Float(0.75)),
-        ("escalation", s("queue")),
-    ]);
-    if let Value::Object(pairs) = &mut doc {
-        pairs[2].1 = block;
+    // PC-35 retired PC-14's single-model list in favor of 1 through 128
+    // printable ASCII non-whitespace identifiers, so this refusal pin now
+    // checks out-of-shape model values while valid custom and provider
+    // identifiers are pinned in pc35_model_identifier_edges_hold_in_policy_and_audit_log.
+    for bad_model in [
+        s(""),
+        s("bad model"),
+        s("bad\nmodel"),
+        s("\x7f"),
+        s(&"m".repeat(129)),
+        Value::Null,
+        Value::int(7),
+    ] {
+        let mut doc = shell_judge_policy(0.75, "queue");
+        let block = Value::obj(vec![
+            ("model", bad_model),
+            ("threshold", Value::Float(0.75)),
+            ("escalation", s("queue")),
+        ]);
+        if let Value::Object(pairs) = &mut doc {
+            pairs[2].1 = block;
+        }
+        assert!(load_policy(&doc).is_err());
     }
-    assert!(load_policy(&doc).is_err());
 }
 
 #[test]
@@ -3674,4 +3688,921 @@ fn the_contracts_a11_example_names_the_recorded_request_digest() {
         printed[0], recorded,
         "the digest line under the printed request of case a11 differs from the digest the fixture records"
     );
+}
+
+// --- PC-35 default model and multi-provider wire codecs ------------------------
+
+#[test]
+fn pc35_contract_phrases_and_default_model_constants() {
+    assert_eq!(portcullis::DEFAULT_JUDGE_MODEL, "jev-1.14.0");
+    assert_eq!(
+        portcullis::JUDGE_MODELS,
+        [
+            "jev-1.14.0",
+            "jev-1.13.0",
+            "gemini-decision-1",
+            "gpt-6-luna",
+            "gpt-oss-safeguard-120b",
+            "gpt-oss-safeguard-20b",
+            "pplx-decider-v1.3",
+            "pplx-decider-latest",
+            "pplx-decider-flash-v1.3",
+            "pplx-decider-flash-latest",
+            "@cf/cloudflare/clef",
+            "@cf/cloudflare/clef-flash",
+            "clef",
+            "clef-flash",
+        ]
+    );
+
+    let contract = contract_text();
+    for phrase in [
+        "### Probe preamble",
+        "Obligation PC-35 covers the default model and provider wire codecs",
+        "DEFAULT_JUDGE_MODEL at jev-1.14.0",
+        "the model key inside the judgment block is optional and resolves to DEFAULT_JUDGE_MODEL when omitted",
+        "printable ASCII non-whitespace range from 0x21 through 0x7E inclusive",
+        "typesafe, google, openai, perplexity, and cloudflare",
+        "POST over https at api.perplexity.ai/v1/decisions",
+    ] {
+        assert!(contract.contains(phrase), "missing contract phrase {phrase}");
+    }
+}
+
+#[test]
+fn pc35_omitted_judgment_model_defaults_to_jev_1_14_0() {
+    let doc = Value::obj(vec![
+        ("format", s("portcullis-policy/1")),
+        ("default", s("deny")),
+        (
+            "judgment",
+            Value::obj(vec![
+                ("threshold", Value::Float(0.75)),
+                ("escalation", s("queue")),
+            ]),
+        ),
+        (
+            "rules",
+            arr(vec![rule(
+                "judge-shell",
+                "shell",
+                "judge",
+                Value::obj(vec![("argv0", matcher("glob", "*"))]),
+                "shell calls whose safety turns on the stated task",
+            )]),
+        ),
+    ]);
+    let policy = load_policy(&doc).expect("omitted judgment.model loads");
+    assert_eq!(policy.judgment.as_ref().unwrap().model, "jev-1.14.0");
+    let transport = StubTransport::replying(&allow_reply());
+    let decision = portcullis::evaluate_with_transport(
+        Some(&policy),
+        None,
+        &shell_call(&["ls"]),
+        AT,
+        Some(&transport),
+    );
+    let requests = transport.requests.borrow();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(field(&requests[0], "model"), &s("jev-1.14.0"));
+    assert_eq!(model_field(&decision, "model"), &s("jev-1.14.0"));
+    assert_eq!(field(&decision, "decision"), &s("allow"));
+}
+
+#[test]
+fn pc35_model_identifier_edges_hold_in_policy_and_audit_log() {
+    let max_ok = "m".repeat(128);
+    let valid_ids = [
+        "jev-1.14.0",
+        "jev-1.13.0",
+        "gemini-decision-1",
+        "gpt-6-luna",
+        "gpt-oss-safeguard-120b",
+        "gpt-oss-safeguard-20b",
+        "pplx-decider-v1.3",
+        "pplx-decider-latest",
+        "pplx-decider-flash-v1.3",
+        "pplx-decider-flash-latest",
+        "@cf/cloudflare/clef",
+        "@cf/cloudflare/clef-flash",
+        "clef",
+        "clef-flash",
+        "some-other-model",
+        "openrouter/openai/gpt-6-luna",
+        "!",
+        "~",
+        max_ok.as_str(),
+    ];
+    for id in valid_ids {
+        assert!(portcullis::is_valid_model_name(id), "{id}");
+        let mut doc = shell_judge_policy(0.75, "queue");
+        if let Value::Object(pairs) = &mut doc {
+            pairs[2].1 = Value::obj(vec![
+                ("model", s(id)),
+                ("threshold", Value::Float(0.75)),
+                ("escalation", s("queue")),
+            ]);
+        }
+        let policy = load_policy(&doc).expect("valid model identifier loads");
+        let transport = StubTransport::replying(&allow_reply());
+        let decision = portcullis::evaluate_with_transport(
+            Some(&policy),
+            None,
+            &shell_call(&["ls"]),
+            AT,
+            Some(&transport),
+        );
+        assert_eq!(model_field(&decision, "model"), &s(id));
+        let dir = temp_dir(&format!("pc35-log-ok-{}", id.len()));
+        let log_path = dir.join("audit.jsonl");
+        portcullis::append_decision(&log_path, &decision).unwrap();
+        let read_back = read_log(&log_path).unwrap();
+        assert_eq!(read_back.len(), 1);
+        assert_eq!(model_field(&read_back[0], "model"), &s(id));
+    }
+
+    for (idx, bad) in [
+        s(""),
+        s("jev 1.14.0"),
+        s("jev\t1.14.0"),
+        s("jev\n1.14.0"),
+        s("\x20"),
+        s("\x7f"),
+        s("model-\u{00e9}"),
+        s(&"m".repeat(129)),
+        Value::Null,
+        Value::int(42),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        if let Some(txt) = bad.as_str() {
+            assert!(!portcullis::is_valid_model_name(txt), "{txt:?}");
+        }
+        assert_model_tamper_is_corruption(
+            &format!("pc35-log-bad-{idx}"),
+            tamper_model(&valid_model_record(), "model", bad),
+        );
+    }
+}
+
+#[test]
+fn pc35_provider_detection_and_wire_model_mapping() {
+    use portcullis::{cloudflare_endpoint, detect_provider, wire_model_name, DecisionProvider};
+
+    assert_eq!(detect_provider("jev-1.14.0"), DecisionProvider::TypeSafe);
+    assert_eq!(detect_provider("jev-1.13.0"), DecisionProvider::TypeSafe);
+    assert_eq!(
+        detect_provider("typesafe/jev-1.14.0"),
+        DecisionProvider::TypeSafe
+    );
+    assert_eq!(
+        detect_provider("gemini-decision-1"),
+        DecisionProvider::Google
+    );
+    assert_eq!(
+        detect_provider("models/gemini-decision-1"),
+        DecisionProvider::Google
+    );
+    assert_eq!(
+        detect_provider("google/gemini-decision-1"),
+        DecisionProvider::Google
+    );
+    assert_eq!(detect_provider("gpt-6-luna"), DecisionProvider::OpenAi);
+    assert_eq!(
+        detect_provider("gpt-oss-safeguard-120b"),
+        DecisionProvider::OpenAi
+    );
+    assert_eq!(
+        detect_provider("openai/gpt-oss-safeguard-20b"),
+        DecisionProvider::OpenAi
+    );
+    assert_eq!(
+        detect_provider("pplx-decider-v1.3"),
+        DecisionProvider::Perplexity
+    );
+    assert_eq!(
+        detect_provider("perplexity/pplx-decider-flash-latest"),
+        DecisionProvider::Perplexity
+    );
+    assert_eq!(
+        detect_provider("@cf/cloudflare/clef"),
+        DecisionProvider::Cloudflare
+    );
+    assert_eq!(detect_provider("clef-flash"), DecisionProvider::Cloudflare);
+    assert_eq!(
+        detect_provider("clef-preview"),
+        DecisionProvider::Cloudflare
+    );
+    assert_eq!(
+        detect_provider("cloudflare/clef"),
+        DecisionProvider::Cloudflare
+    );
+    assert_eq!(
+        detect_provider("custom-gateway-v2"),
+        DecisionProvider::TypeSafe
+    );
+    assert_eq!(
+        DecisionProvider::Perplexity.default_endpoint(),
+        "https://api.perplexity.ai/v1/decisions"
+    );
+
+    assert_eq!(
+        wire_model_name(DecisionProvider::Google, "models/gemini-decision-1"),
+        "gemini-decision-1"
+    );
+    assert_eq!(
+        wire_model_name(DecisionProvider::Cloudflare, "clef"),
+        "clef"
+    );
+    assert_eq!(
+        wire_model_name(DecisionProvider::Cloudflare, "@cf/cloudflare/clef"),
+        "clef"
+    );
+    assert_eq!(
+        wire_model_name(
+            DecisionProvider::Cloudflare,
+            "cloudflare/@cf/cloudflare/clef-flash"
+        ),
+        "clef-flash"
+    );
+    assert_eq!(
+        portcullis::cloudflare_route_model("clef"),
+        "@cf/cloudflare/clef"
+    );
+    assert_eq!(
+        portcullis::cloudflare_route_model("cloudflare/clef-flash"),
+        "@cf/cloudflare/clef-flash"
+    );
+    assert_eq!(
+        cloudflare_endpoint("acct-0001", "clef-flash").unwrap(),
+        "https://api.cloudflare.com/client/v4/accounts/acct-0001/ai/run/@cf/cloudflare/clef-flash"
+    );
+    for (bad_acct, bad_model) in [
+        ("", "clef"),
+        ("../zones", "clef"),
+        ("acct?x=1", "clef"),
+        (
+            "acct-0001",
+            "cloudflare/../../../../zones/victim/purge_cache",
+        ),
+        ("acct-0001", "cloudflare/team#preview"),
+        ("acct-0001", "cloudflare/team?x=1"),
+        ("acct-0001", "cloudflare/"),
+    ] {
+        assert!(
+            cloudflare_endpoint(bad_acct, bad_model).is_err(),
+            "cloudflare_endpoint must reject ({bad_acct:?}, {bad_model:?})"
+        );
+    }
+}
+
+#[test]
+fn pc35_five_provider_request_and_reply_round_trips() {
+    use portcullis::{format_provider_request, normalize_provider_reply, DecisionProvider};
+
+    let build_canonical_req = |model_id: &str| -> (portcullis::Policy, String) {
+        let mut doc = shell_judge_policy(0.75, "queue");
+        if let Value::Object(pairs) = &mut doc {
+            pairs[2].1 = Value::obj(vec![
+                ("model", s(model_id)),
+                ("threshold", Value::Float(0.75)),
+                ("escalation", s("queue")),
+            ]);
+        }
+        let policy = load_policy(&doc).unwrap();
+        let probe = StubTransport::replying(&allow_reply());
+        portcullis::evaluate_with_transport(
+            Some(&policy),
+            None,
+            &shell_call(&["ls", "-la"]),
+            AT,
+            Some(&probe),
+        );
+        let req_json = String::from_utf8(canonical(&probe.requests.borrow()[0])).unwrap();
+        (policy, req_json)
+    };
+
+    // Prefix-only identifiers resolve to an empty wire model and refuse formatting.
+    for prefix_only in [
+        "typesafe/",
+        "google/",
+        "google/models/",
+        "models/",
+        "openai/",
+        "perplexity/",
+        "cloudflare/",
+    ] {
+        let (_, bad_req) = build_canonical_req(prefix_only);
+        assert!(
+            format_provider_request(&bad_req, None).is_err(),
+            "prefix-only model {prefix_only} must refuse"
+        );
+    }
+
+    // 1. TypeSafe (jev-1.14.0) request + verdict, abstention, silence, malformed (including 1e500 overflow)
+    let (ts_policy, ts_req) = build_canonical_req("jev-1.14.0");
+    let ts_wire = format_provider_request(&ts_req, None).unwrap();
+    let ts_parsed = strict_parse(&ts_wire).unwrap();
+    assert_eq!(field(&ts_parsed, "model"), &s("jev-1.14.0"));
+    assert!(ts_parsed.get("state").is_some());
+    let ts_norm = normalize_provider_reply(
+        "{\"model\":\"jev-1.14.0\",\"answers\":{\"verdict\":{\"type\":\"choice\",\"choice\":\"allow\",\"probabilities\":{\"allow\":0.91,\"deny\":0.03,\"escalate\":0.04,\"other\":0.02}},\"risk\":{\"type\":\"score\",\"score\":2.5}}}",
+        Some(DecisionProvider::TypeSafe),
+        Some("jev-1.14.0"),
+    )
+    .unwrap();
+    let ts_dec = portcullis::evaluate_with_transport(
+        Some(&ts_policy),
+        None,
+        &shell_call(&["ls", "-la"]),
+        AT,
+        Some(&StubTransport::replying(&ts_norm)),
+    );
+    assert_eq!(field(&ts_dec, "decision"), &s("allow"));
+    assert_eq!(model_field(&ts_dec, "confidence"), &Value::Float(0.91));
+    assert_eq!(model_field(&ts_dec, "risk_score"), &Value::Float(3.5));
+
+    let ts_abs_norm = normalize_provider_reply(
+        "{\"model\":\"jev-1.14.0\",\"answers\":{\"verdict\":{\"choice\":\"other\",\"probabilities\":{\"allow\":0.1,\"deny\":0.1,\"escalate\":0.1,\"other\":0.7}},\"risk\":{\"score\":1.0}}}",
+        Some(DecisionProvider::TypeSafe),
+        Some("jev-1.14.0"),
+    )
+    .unwrap();
+    let ts_abs_dec = portcullis::evaluate_with_transport(
+        Some(&ts_policy),
+        None,
+        &shell_call(&["ls", "-la"]),
+        AT,
+        Some(&StubTransport::replying(&ts_abs_norm)),
+    );
+    assert_eq!(model_field(&ts_abs_dec, "fallback"), &s("abstention"));
+    assert_eq!(model_field(&ts_abs_dec, "risk_score"), &Value::Float(2.0));
+
+    let ts_overflow_norm = normalize_provider_reply(
+        "{\"model\":\"jev-1.14.0\",\"answers\":{\"verdict\":1e500,\"risk\":{\"score\":4.0}}}",
+        Some(DecisionProvider::TypeSafe),
+        Some("jev-1.14.0"),
+    )
+    .unwrap();
+    let ts_overflow_dec = portcullis::evaluate_with_transport(
+        Some(&ts_policy),
+        None,
+        &shell_call(&["ls", "-la"]),
+        AT,
+        Some(&StubTransport::replying(&ts_overflow_norm)),
+    );
+    assert_eq!(model_field(&ts_overflow_dec, "fallback"), &s("malformed"));
+    assert_eq!(
+        model_field(&ts_overflow_dec, "risk_score"),
+        &Value::Float(5.0)
+    );
+
+    // Non-object valid JSON normalizes to canonical silence.
+    let non_obj_norm = normalize_provider_reply(
+        "[1,2]",
+        Some(DecisionProvider::TypeSafe),
+        Some("jev-1.14.0"),
+    )
+    .unwrap();
+    let non_obj_dec = portcullis::evaluate_with_transport(
+        Some(&ts_policy),
+        None,
+        &shell_call(&["ls", "-la"]),
+        AT,
+        Some(&StubTransport::replying(&non_obj_norm)),
+    );
+    assert_eq!(model_field(&non_obj_dec, "fallback"), &s("silence"));
+
+    // 2. Google (gemini-decision-1) with input + ordered criteria array and verdict/abstention/silence/malformed
+    let (gg_policy, gg_req) = build_canonical_req("gemini-decision-1");
+    let gg_wire = format_provider_request(&gg_req, None).unwrap();
+    let gg_parsed = strict_parse(&gg_wire).unwrap();
+    assert_eq!(field(&gg_parsed, "model"), &s("gemini-decision-1"));
+    assert!(gg_parsed.get("input").is_some());
+    assert!(gg_parsed.get("state").is_none());
+    let gg_criteria = gg_parsed
+        .get("questions")
+        .unwrap()
+        .get("risk")
+        .unwrap()
+        .get("criteria")
+        .unwrap();
+    assert_eq!(gg_criteria.as_array().unwrap().len(), 10);
+    let gg_raw = "{\"answers\":{\"verdict\":{\"choice\":\"deny\",\"probabilities\":{\"allow\":0.05,\"deny\":0.88,\"escalate\":0.05,\"other\":0.02}},\"risk\":{\"probabilities\":{\"0\":0.0,\"1\":0.0,\"2\":0.0,\"3\":0.0,\"4\":0.0,\"5\":0.0,\"6\":0.0,\"7\":0.5,\"8\":0.0,\"9\":0.5},\"legend\":[\"l0\",\"l1\"]}}}";
+    let gg_norm = normalize_provider_reply(
+        gg_raw,
+        Some(DecisionProvider::Google),
+        Some("gemini-decision-1"),
+    )
+    .unwrap();
+    let gg_dec = portcullis::evaluate_with_transport(
+        Some(&gg_policy),
+        None,
+        &shell_call(&["ls", "-la"]),
+        AT,
+        Some(&StubTransport::replying(&gg_norm)),
+    );
+    assert_eq!(field(&gg_dec, "decision"), &s("deny"));
+    assert_eq!(model_field(&gg_dec, "confidence"), &Value::Float(0.88));
+    assert_eq!(model_field(&gg_dec, "risk_score"), &Value::Float(9.0));
+
+    // Incomplete probability sum (0.2 < 0.99) is rejected for weighted score.
+    let gg_bad_sum = "{\"answers\":{\"verdict\":{\"choice\":\"other\",\"probabilities\":{\"allow\":0.1,\"deny\":0.1,\"escalate\":0.1,\"other\":0.7}},\"risk\":{\"probabilities\":{\"0\":0.0,\"1\":0.0,\"2\":0.0,\"3\":0.0,\"4\":0.0,\"5\":0.0,\"6\":0.0,\"7\":0.0,\"8\":0.0,\"9\":0.2}}}}";
+    let gg_abs_norm = normalize_provider_reply(
+        gg_bad_sum,
+        Some(DecisionProvider::Google),
+        Some("gemini-decision-1"),
+    )
+    .unwrap();
+    let gg_abs_dec = portcullis::evaluate_with_transport(
+        Some(&gg_policy),
+        None,
+        &shell_call(&["ls", "-la"]),
+        AT,
+        Some(&StubTransport::replying(&gg_abs_norm)),
+    );
+    assert_eq!(model_field(&gg_abs_dec, "fallback"), &s("abstention"));
+    assert_eq!(model_field(&gg_abs_dec, "risk_score"), &Value::Null);
+
+    let gg_silent_norm = normalize_provider_reply(
+        "{\"answers\":{}}",
+        Some(DecisionProvider::Google),
+        Some("gemini-decision-1"),
+    )
+    .unwrap();
+    let gg_silent_dec = portcullis::evaluate_with_transport(
+        Some(&gg_policy),
+        None,
+        &shell_call(&["ls", "-la"]),
+        AT,
+        Some(&StubTransport::replying(&gg_silent_norm)),
+    );
+    assert_eq!(model_field(&gg_silent_dec, "fallback"), &s("silence"));
+
+    let gg_mal_norm = normalize_provider_reply(
+        "{\"answers\":{\"verdict\":{\"choice\":\"bogus\",\"probabilities\":{}},\"risk\":{\"score\":3.0}}}",
+        Some(DecisionProvider::Google),
+        Some("gemini-decision-1"),
+    )
+    .unwrap();
+    let gg_mal_dec = portcullis::evaluate_with_transport(
+        Some(&gg_policy),
+        None,
+        &shell_call(&["ls", "-la"]),
+        AT,
+        Some(&StubTransport::replying(&gg_mal_norm)),
+    );
+    assert_eq!(model_field(&gg_mal_dec, "fallback"), &s("malformed"));
+    assert_eq!(model_field(&gg_mal_dec, "risk_score"), &Value::Float(4.0));
+
+    // 3. OpenAI (gpt-6-luna) with native choices {value,description}, levels {label,description}, and array answers/probabilities
+    let (oa_policy, oa_req) = build_canonical_req("gpt-6-luna");
+    let oa_wire = format_provider_request(&oa_req, None).unwrap();
+    let oa_parsed = strict_parse(&oa_wire).unwrap();
+    assert_eq!(field(&oa_parsed, "model"), &s("gpt-6-luna"));
+    assert!(oa_parsed.get("input").is_some());
+    let oa_qs = field(&oa_parsed, "questions").as_array().unwrap();
+    assert_eq!(oa_qs.len(), 2);
+    assert!(oa_qs[0].get("choices").unwrap().as_array().unwrap()[0]
+        .get("value")
+        .is_some());
+    assert!(oa_qs[1].get("levels").unwrap().as_array().unwrap()[0]
+        .get("label")
+        .is_some());
+    let oa_raw = "{\"model\":\"gpt-6-luna\",\"answers\":[{\"type\":\"choice\",\"name\":\"verdict\",\"choice\":\"allow\",\"confidence\":0.40,\"probabilities\":[{\"value\":\"allow\",\"probability\":0.82},{\"value\":\"deny\",\"probability\":0.08},{\"value\":\"escalate\",\"probability\":0.08},{\"value\":\"other\",\"probability\":0.02}]},{\"type\":\"score\",\"name\":\"risk\",\"score\":1.0,\"probabilities\":[{\"value\":0,\"label\":\"0\",\"probability\":0.2},{\"value\":1,\"label\":\"1\",\"probability\":0.6},{\"value\":2,\"label\":\"2\",\"probability\":0.2},{\"value\":3,\"label\":\"3\",\"probability\":0.0},{\"value\":4,\"label\":\"4\",\"probability\":0.0},{\"value\":5,\"label\":\"5\",\"probability\":0.0},{\"value\":6,\"label\":\"6\",\"probability\":0.0},{\"value\":7,\"label\":\"7\",\"probability\":0.0},{\"value\":8,\"label\":\"8\",\"probability\":0.0},{\"value\":9,\"label\":\"9\",\"probability\":0.0}]}]}";
+    let oa_norm =
+        normalize_provider_reply(oa_raw, Some(DecisionProvider::OpenAi), Some("gpt-6-luna"))
+            .unwrap();
+    let oa_dec = portcullis::evaluate_with_transport(
+        Some(&oa_policy),
+        None,
+        &shell_call(&["ls", "-la"]),
+        AT,
+        Some(&StubTransport::replying(&oa_norm)),
+    );
+    assert_eq!(field(&oa_dec, "decision"), &s("allow"));
+    assert_eq!(model_field(&oa_dec, "confidence"), &Value::Float(0.82));
+    assert_eq!(model_field(&oa_dec, "risk_score"), &Value::Float(2.0));
+
+    let oa_abs_norm = normalize_provider_reply(
+        "{\"answers\":[{\"name\":\"verdict\",\"choice\":\"other\",\"probabilities\":[{\"value\":\"allow\",\"probability\":0.1},{\"value\":\"deny\",\"probability\":0.1},{\"value\":\"escalate\",\"probability\":0.1},{\"value\":\"other\",\"probability\":0.7}]}]}",
+        Some(DecisionProvider::OpenAi),
+        Some("gpt-6-luna"),
+    )
+    .unwrap();
+    let oa_abs_dec = portcullis::evaluate_with_transport(
+        Some(&oa_policy),
+        None,
+        &shell_call(&["ls", "-la"]),
+        AT,
+        Some(&StubTransport::replying(&oa_abs_norm)),
+    );
+    assert_eq!(model_field(&oa_abs_dec, "fallback"), &s("abstention"));
+
+    let oa_silent_norm = normalize_provider_reply(
+        "{\"output\":7}",
+        Some(DecisionProvider::OpenAi),
+        Some("gpt-6-luna"),
+    )
+    .unwrap();
+    let oa_silent_dec = portcullis::evaluate_with_transport(
+        Some(&oa_policy),
+        None,
+        &shell_call(&["ls", "-la"]),
+        AT,
+        Some(&StubTransport::replying(&oa_silent_norm)),
+    );
+    assert_eq!(model_field(&oa_silent_dec, "fallback"), &s("silence"));
+
+    // Duplicate verdict items in OpenAI array reply classify as malformed while preserving single valid risk.
+    let oa_dup_norm = normalize_provider_reply(
+        "{\"answers\":[{\"name\":\"verdict\",\"choice\":\"deny\",\"probabilities\":{\"allow\":0.0,\"deny\":1.0,\"escalate\":0.0,\"other\":0.0}},{\"name\":\"verdict\",\"choice\":\"allow\",\"probabilities\":{\"allow\":1.0,\"deny\":0.0,\"escalate\":0.0,\"other\":0.0}},{\"name\":\"risk\",\"score\":6.0}]}",
+        Some(DecisionProvider::OpenAi),
+        Some("gpt-6-luna"),
+    )
+    .unwrap();
+    let oa_dup_dec = portcullis::evaluate_with_transport(
+        Some(&oa_policy),
+        None,
+        &shell_call(&["ls", "-la"]),
+        AT,
+        Some(&StubTransport::replying(&oa_dup_norm)),
+    );
+    assert_eq!(model_field(&oa_dup_dec, "fallback"), &s("malformed"));
+    assert_eq!(model_field(&oa_dup_dec, "risk_score"), &Value::Float(7.0));
+
+    // Out-of-order OpenAI probability array weights by true level index, while malformed items,
+    // 11-key maps, and out-of-range direct scores do not fall back to probabilities.
+    let oa_reordered = "{\"answers\":[{\"name\":\"verdict\",\"choice\":\"allow\",\"probabilities\":[{\"value\":\"allow\",\"probability\":0.9},{\"value\":\"deny\",\"probability\":0.04},{\"value\":\"escalate\",\"probability\":0.04},{\"value\":\"other\",\"probability\":0.02}]},{\"name\":\"risk\",\"probabilities\":[{\"value\":9,\"label\":\"9\",\"probability\":0.9},{\"value\":0,\"label\":\"0\",\"probability\":0.1},{\"value\":1,\"label\":\"1\",\"probability\":0.0},{\"value\":2,\"label\":\"2\",\"probability\":0.0},{\"value\":3,\"label\":\"3\",\"probability\":0.0},{\"value\":4,\"label\":\"4\",\"probability\":0.0},{\"value\":5,\"label\":\"5\",\"probability\":0.0},{\"value\":6,\"label\":\"6\",\"probability\":0.0},{\"value\":7,\"label\":\"7\",\"probability\":0.0},{\"value\":8,\"label\":\"8\",\"probability\":0.0}]}]}";
+    let oa_reordered_norm = normalize_provider_reply(
+        oa_reordered,
+        Some(DecisionProvider::OpenAi),
+        Some("gpt-6-luna"),
+    )
+    .unwrap();
+    let oa_reordered_dec = portcullis::evaluate_with_transport(
+        Some(&oa_policy),
+        None,
+        &shell_call(&["ls", "-la"]),
+        AT,
+        Some(&StubTransport::replying(&oa_reordered_norm)),
+    );
+    assert_eq!(
+        model_field(&oa_reordered_dec, "risk_score"),
+        &Value::Float(9.1)
+    );
+
+    for bad_risk in [
+        "{\"probabilities\":[{\"value\":\"9\",\"probability\":1.0},{\"value\":0,\"probability\":0.0},{\"value\":1,\"probability\":0.0},{\"value\":2,\"probability\":0.0},{\"value\":3,\"probability\":0.0},{\"value\":4,\"probability\":0.0},{\"value\":5,\"probability\":0.0},{\"value\":6,\"probability\":0.0},{\"value\":7,\"probability\":0.0},{\"value\":8,\"probability\":0.0}]}",
+        "{\"probabilities\":[{\"label\":9,\"probability\":1.0},{\"label\":\"0\",\"probability\":0.0},{\"label\":\"1\",\"probability\":0.0},{\"label\":\"2\",\"probability\":0.0},{\"label\":\"3\",\"probability\":0.0},{\"label\":\"4\",\"probability\":0.0},{\"label\":\"5\",\"probability\":0.0},{\"label\":\"6\",\"probability\":0.0},{\"label\":\"7\",\"probability\":0.0},{\"label\":\"8\",\"probability\":0.0}]}",
+        "{\"probabilities\":{\"0\":0.1,\"1\":0.1,\"2\":0.1,\"3\":0.1,\"4\":0.1,\"5\":0.1,\"6\":0.1,\"7\":0.1,\"8\":0.1,\"9\":0.1,\"10\":0.0}}",
+        "{\"score\":99.0,\"probabilities\":{\"0\":0.0,\"1\":0.0,\"2\":0.0,\"3\":0.0,\"4\":0.0,\"5\":0.0,\"6\":0.0,\"7\":0.0,\"8\":0.0,\"9\":1.0}}",
+        "{\"score\":\"bad\",\"probabilities\":{\"0\":0.0,\"1\":0.0,\"2\":0.0,\"3\":0.0,\"4\":0.0,\"5\":0.0,\"6\":0.0,\"7\":0.0,\"8\":0.0,\"9\":1.0}}",
+    ] {
+        let raw = format!(
+            "{{\"answers\":[{{\"name\":\"verdict\",\"choice\":\"allow\",\"probabilities\":[{{\"value\":\"allow\",\"probability\":0.9}},{{\"value\":\"deny\",\"probability\":0.04}},{{\"value\":\"escalate\",\"probability\":0.04}},{{\"value\":\"other\",\"probability\":0.02}}]}},{{\"name\":\"risk\",\"type\":\"score\",{}}}]}}",
+            &bad_risk[1..bad_risk.len() - 1]
+        );
+        let norm = normalize_provider_reply(
+            &raw,
+            Some(DecisionProvider::OpenAi),
+            Some("gpt-6-luna"),
+        )
+        .unwrap();
+        let dec = portcullis::evaluate_with_transport(
+            Some(&oa_policy),
+            None,
+            &shell_call(&["ls", "-la"]),
+            AT,
+            Some(&StubTransport::replying(&norm)),
+        );
+        assert_eq!(
+            model_field(&dec, "risk_score"),
+            &Value::Null,
+            "bad risk {bad_risk} must not produce a score"
+        );
+    }
+
+    // 4. Perplexity (pplx-decider-v1.3) verdict, abstention, silence, malformed
+    let (px_policy, px_req) = build_canonical_req("pplx-decider-v1.3");
+    let px_wire = format_provider_request(&px_req, None).unwrap();
+    let px_parsed = strict_parse(&px_wire).unwrap();
+    assert_eq!(field(&px_parsed, "model"), &s("pplx-decider-v1.3"));
+    let px_verdict_norm = normalize_provider_reply(
+        "{\"model\":\"pplx-decider-v1.3\",\"answers\":{\"verdict\":{\"choice\":\"allow\",\"probabilities\":{\"allow\":0.89,\"deny\":0.05,\"escalate\":0.04,\"other\":0.02}},\"risk\":{\"expected_score\":1.5}}}",
+        Some(DecisionProvider::Perplexity),
+        Some("pplx-decider-v1.3"),
+    )
+    .unwrap();
+    let px_verdict_dec = portcullis::evaluate_with_transport(
+        Some(&px_policy),
+        None,
+        &shell_call(&["ls", "-la"]),
+        AT,
+        Some(&StubTransport::replying(&px_verdict_norm)),
+    );
+    assert_eq!(field(&px_verdict_dec, "decision"), &s("allow"));
+    assert_eq!(
+        model_field(&px_verdict_dec, "risk_score"),
+        &Value::Float(2.5)
+    );
+
+    let px_raw = "{\"model\":\"pplx-decider-v1.3\",\"answers\":{\"verdict\":{\"choice\":\"other\",\"distribution\":{\"allow\":0.1,\"deny\":0.1,\"escalate\":0.2,\"other\":0.6}},\"risk\":{\"expected_score\":4.5}}}";
+    let px_norm = normalize_provider_reply(
+        px_raw,
+        Some(DecisionProvider::Perplexity),
+        Some("pplx-decider-v1.3"),
+    )
+    .unwrap();
+    let px_dec = portcullis::evaluate_with_transport(
+        Some(&px_policy),
+        None,
+        &shell_call(&["ls", "-la"]),
+        AT,
+        Some(&StubTransport::replying(&px_norm)),
+    );
+    assert_eq!(field(&px_dec, "decision"), &s("escalate"));
+    assert_eq!(model_field(&px_dec, "fallback"), &s("abstention"));
+    assert_eq!(model_field(&px_dec, "risk_score"), &Value::Float(5.5));
+
+    let px_silent_norm = normalize_provider_reply(
+        "{\"model\":\"pplx-decider-v1.3\",\"answers\":null}",
+        Some(DecisionProvider::Perplexity),
+        Some("pplx-decider-v1.3"),
+    )
+    .unwrap();
+    let px_silent_dec = portcullis::evaluate_with_transport(
+        Some(&px_policy),
+        None,
+        &shell_call(&["ls", "-la"]),
+        AT,
+        Some(&StubTransport::replying(&px_silent_norm)),
+    );
+    assert_eq!(model_field(&px_silent_dec, "fallback"), &s("silence"));
+
+    let px_mal_norm = normalize_provider_reply(
+        "{\"model\":\"pplx-decider-v1.3\",\"answers\":{\"verdict\":{\"choice\":\"allow\",\"probabilities\":{\"allow\":1.5,\"deny\":0.0,\"escalate\":0.0,\"other\":0.0}}}}",
+        Some(DecisionProvider::Perplexity),
+        Some("pplx-decider-v1.3"),
+    )
+    .unwrap();
+    let px_mal_dec = portcullis::evaluate_with_transport(
+        Some(&px_policy),
+        None,
+        &shell_call(&["ls", "-la"]),
+        AT,
+        Some(&StubTransport::replying(&px_mal_norm)),
+    );
+    assert_eq!(model_field(&px_mal_dec, "fallback"), &s("malformed"));
+
+    // 5. Cloudflare (@cf/cloudflare/clef -> short body model clef) verdict, abstention, silence, malformed, and envelope refusals
+    let (cf_policy, cf_req) = build_canonical_req("@cf/cloudflare/clef");
+    let cf_wire = format_provider_request(&cf_req, None).unwrap();
+    let cf_parsed = strict_parse(&cf_wire).unwrap();
+    assert_eq!(field(&cf_parsed, "model"), &s("clef"));
+    let cf_raw = "{\"success\":true,\"result\":{\"answers\":{\"verdict\":{\"selected\":\"escalate\",\"probabilities\":{\"allow\":0.1,\"deny\":0.2,\"escalate\":0.65,\"other\":0.05}},\"risk\":{\"expected\":6.0}}}}";
+    let cf_norm = normalize_provider_reply(cf_raw, None, Some("@cf/cloudflare/clef")).unwrap();
+    let cf_dec = portcullis::evaluate_with_transport(
+        Some(&cf_policy),
+        None,
+        &shell_call(&["ls", "-la"]),
+        AT,
+        Some(&StubTransport::replying(&cf_norm)),
+    );
+    assert_eq!(field(&cf_dec, "decision"), &s("escalate"));
+    assert_eq!(model_field(&cf_dec, "verdict"), &s("escalate"));
+    assert_eq!(model_field(&cf_dec, "fallback"), &s("none"));
+    assert_eq!(model_field(&cf_dec, "risk_score"), &Value::Float(7.0));
+
+    let cf_abs_norm = normalize_provider_reply(
+        "{\"result\":{\"answers\":{\"verdict\":{\"choice\":\"other\",\"probabilities\":{\"allow\":0.1,\"deny\":0.1,\"escalate\":0.1,\"other\":0.7}}}}}",
+        None,
+        Some("clef"),
+    )
+    .unwrap();
+    let (_, cf_short_req) = build_canonical_req("clef");
+    let _ = cf_short_req;
+    let cf_short_policy = {
+        let mut doc = shell_judge_policy(0.75, "queue");
+        if let Value::Object(pairs) = &mut doc {
+            pairs[2].1 = Value::obj(vec![
+                ("model", s("clef")),
+                ("threshold", Value::Float(0.75)),
+                ("escalation", s("queue")),
+            ]);
+        }
+        load_policy(&doc).unwrap()
+    };
+    let cf_abs_dec = portcullis::evaluate_with_transport(
+        Some(&cf_short_policy),
+        None,
+        &shell_call(&["ls", "-la"]),
+        AT,
+        Some(&StubTransport::replying(&cf_abs_norm)),
+    );
+    assert_eq!(model_field(&cf_abs_dec, "fallback"), &s("abstention"));
+
+    let cf_silent_norm = normalize_provider_reply(
+        "{\"success\":true,\"result\":{}}",
+        Some(DecisionProvider::Cloudflare),
+        Some("clef"),
+    )
+    .unwrap();
+    let cf_silent_dec = portcullis::evaluate_with_transport(
+        Some(&cf_short_policy),
+        None,
+        &shell_call(&["ls", "-la"]),
+        AT,
+        Some(&StubTransport::replying(&cf_silent_norm)),
+    );
+    assert_eq!(model_field(&cf_silent_dec, "fallback"), &s("silence"));
+
+    let cf_mal_norm = normalize_provider_reply(
+        "{\"success\":true,\"result\":{\"answers\":{\"verdict\":{\"choice\":null}}}}",
+        Some(DecisionProvider::Cloudflare),
+        Some("clef"),
+    )
+    .unwrap();
+    let cf_mal_dec = portcullis::evaluate_with_transport(
+        Some(&cf_short_policy),
+        None,
+        &shell_call(&["ls", "-la"]),
+        AT,
+        Some(&StubTransport::replying(&cf_mal_norm)),
+    );
+    assert_eq!(model_field(&cf_mal_dec, "fallback"), &s("malformed"));
+
+    assert!(normalize_provider_reply(
+        "{\"success\":false,\"errors\":[{\"message\":\"bad token\"}]}",
+        Some(DecisionProvider::Cloudflare),
+        Some("clef"),
+    )
+    .is_err());
+    assert!(normalize_provider_reply(
+        "{\"success\":true,\"result\":null}",
+        Some(DecisionProvider::Cloudflare),
+        Some("clef"),
+    )
+    .is_err());
+}
+
+#[test]
+fn pc35_standalone_decision_judge_script_dry_run_across_providers() {
+    // Portability adaptation skips subprocess Python check only if no Python binary is installed.
+    let Some(py) = ["python3", "python"].into_iter().find(|bin| {
+        std::process::Command::new(bin)
+            .arg("--version")
+            .output()
+            .is_ok_and(|o| o.status.success())
+    }) else {
+        return;
+    };
+
+    let script = root().join("examples").join("decision_judge.py");
+    let mut doc = shell_judge_policy(0.75, "queue");
+    if let Value::Object(pairs) = &mut doc {
+        pairs[2].1 = Value::obj(vec![
+            ("threshold", Value::Float(0.75)),
+            ("escalation", s("queue")),
+        ]);
+    }
+    let policy = load_policy(&doc).unwrap();
+    let probe = StubTransport::replying(&allow_reply());
+    portcullis::evaluate_with_transport(
+        Some(&policy),
+        None,
+        &shell_call(&["ls"]),
+        AT,
+        Some(&probe),
+    );
+    let base_req = String::from_utf8(canonical(&probe.requests.borrow()[0])).unwrap();
+    let dir = temp_dir("pc35-script-dry-run");
+    let req_file = dir.join("req.json");
+    std::fs::write(&req_file, &base_req).unwrap();
+
+    for (model_id, expected_provider) in [
+        ("jev-1.14.0", "typesafe"),
+        ("gemini-decision-1", "google"),
+        ("gpt-6-luna", "openai"),
+        ("pplx-decider-v1.3", "perplexity"),
+        ("clef", "cloudflare"),
+    ] {
+        let output = std::process::Command::new(py)
+            .arg(&script)
+            .arg("--dry-run")
+            .arg("--input")
+            .arg(&req_file)
+            .arg("--model")
+            .arg(model_id)
+            .env("CLOUDFLARE_ACCOUNT_ID", "acct-test")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let parsed = strict_parse(&String::from_utf8_lossy(&output.stdout)).unwrap();
+        assert_eq!(field(&parsed, "provider"), &s(expected_provider));
+        let script_wire = String::from_utf8(canonical(field(&parsed, "wire_request"))).unwrap();
+        let mut req_for_rust = strict_parse(&base_req).unwrap();
+        if let Value::Object(pairs) = &mut req_for_rust {
+            for (k, v) in pairs.iter_mut() {
+                if k == "model" {
+                    *v = s(model_id);
+                }
+            }
+        }
+        let rust_wire = portcullis::format_provider_request(
+            &String::from_utf8(canonical(&req_for_rust)).unwrap(),
+            None,
+        )
+        .unwrap();
+        assert_eq!(script_wire, rust_wire, "wire mismatch on {model_id}");
+    }
+
+    // Reject plain http and malformed authority endpoint overrides before sending credentials.
+    for bad_url in [
+        "http://example.com/v1/decisions",
+        "https://:443/v1/decisions",
+        "https://@example.com/v1/decisions",
+        "https://user:pass@example.com/v1/decisions",
+    ] {
+        let http_out = std::process::Command::new(py)
+            .arg(&script)
+            .arg("--dry-run")
+            .arg("--input")
+            .arg(&req_file)
+            .arg("--api-url")
+            .arg(bad_url)
+            .output()
+            .unwrap();
+        assert!(!http_out.status.success(), "bad url {bad_url} must fail");
+    }
+
+    // Explicit HTTPS --api-url on Cloudflare succeeds without CLOUDFLARE_ACCOUNT_ID.
+    let cf_override = std::process::Command::new(py)
+        .arg(&script)
+        .arg("--dry-run")
+        .arg("--input")
+        .arg(&req_file)
+        .arg("--model")
+        .arg("clef")
+        .arg("--api-url")
+        .arg("https://gateway.example.com/v1/clef")
+        .env_remove("CLOUDFLARE_ACCOUNT_ID")
+        .output()
+        .unwrap();
+    assert!(cf_override.status.success());
+
+    // Offline reply normalization forwards duplicate-key JSON as malformed at exit 0
+    // and non-object JSON as canonical silence at exit 0.
+    let dup_reply = dir.join("dup.json");
+    std::fs::write(
+        &dup_reply,
+        "{\"answers\":{\"verdict\":{\"choice\":\"deny\",\"choice\":\"allow\",\"probabilities\":{\"allow\":1.0,\"deny\":0.0,\"escalate\":0.0,\"other\":0.0}}}}",
+    )
+    .unwrap();
+    let dup_out = std::process::Command::new(py)
+        .arg(&script)
+        .arg("--input")
+        .arg(&req_file)
+        .arg("--offline-reply")
+        .arg(&dup_reply)
+        .output()
+        .unwrap();
+    assert!(dup_out.status.success());
+    let dup_dec = portcullis::evaluate_with_transport(
+        Some(&policy),
+        None,
+        &shell_call(&["ls"]),
+        AT,
+        Some(&StubTransport::replying(&String::from_utf8_lossy(
+            &dup_out.stdout,
+        ))),
+    );
+    assert_eq!(model_field(&dup_dec, "fallback"), &s("malformed"));
+
+    let arr_reply = dir.join("arr.json");
+    std::fs::write(&arr_reply, "[1, 2]").unwrap();
+    let arr_out = std::process::Command::new(py)
+        .arg(&script)
+        .arg("--input")
+        .arg(&req_file)
+        .arg("--offline-reply")
+        .arg(&arr_reply)
+        .output()
+        .unwrap();
+    assert!(arr_out.status.success());
+    let arr_dec = portcullis::evaluate_with_transport(
+        Some(&policy),
+        None,
+        &shell_call(&["ls"]),
+        AT,
+        Some(&StubTransport::replying(&String::from_utf8_lossy(
+            &arr_out.stdout,
+        ))),
+    );
+    assert_eq!(model_field(&arr_dec, "fallback"), &s("silence"));
 }

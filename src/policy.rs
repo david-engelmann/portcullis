@@ -3,7 +3,10 @@
 use crate::call::{argv_form_ok, check_keys, is_text, valid_port};
 use crate::errors::PolicyError;
 use crate::value::Value;
-use crate::{ACTIONS, DEFAULTS, FILE_OPERATIONS, JUDGE_MODELS, KINDS, MATCHER_KEYS, POLICY_FORMAT};
+use crate::{
+    is_valid_model_name, ACTIONS, DEFAULTS, DEFAULT_JUDGE_MODEL, FILE_OPERATIONS, KINDS,
+    MATCHER_KEYS, POLICY_FORMAT,
+};
 use std::collections::HashSet;
 
 /// One text matcher, holding exactly one form.
@@ -395,11 +398,12 @@ fn validate_rule(
 
 /// Validate the judgment block of a policy document.
 ///
-/// The block holds exactly the keys model and threshold and
-/// escalation. The model must be one this build carries, the
-/// threshold a number above zero and at most one with a boolean
-/// never counting as a number, and the escalation one of queue
-/// and none.
+/// Under PC-35 the block holds threshold and escalation as required
+/// keys and model as an optional key defaulting to DEFAULT_JUDGE_MODEL.
+/// When model stands present it must be a 1 through 128 printable ASCII
+/// non-whitespace string, the threshold a number above zero and at most
+/// one with a boolean never counting as a number, and the escalation one
+/// of queue and none.
 fn validate_judgment_block(block: &Value) -> Result<Judgment, PolicyError> {
     if block.as_object().is_none() {
         return Err(PolicyError(
@@ -409,16 +413,20 @@ fn validate_judgment_block(block: &Value) -> Result<Judgment, PolicyError> {
     check_keys(
         block,
         &["model", "threshold", "escalation"],
-        &["model", "threshold", "escalation"],
+        &["threshold", "escalation"],
         "the judgment block",
     )
     .map_err(PolicyError)?;
-    let model = block.get("model").unwrap();
-    if !matches!(model, Value::Str(name) if JUDGE_MODELS.contains(&name.as_str())) {
-        return Err(PolicyError(
-            "the judgment block names a model this gate does not carry".to_string(),
-        ));
-    }
+    let model = match block.get("model") {
+        None => DEFAULT_JUDGE_MODEL.to_string(),
+        Some(Value::Str(name)) if is_valid_model_name(name) => name.clone(),
+        Some(_) => {
+            return Err(PolicyError(
+                "the judgment block model must be 1 to 128 printable ASCII non-whitespace characters"
+                    .to_string(),
+            ));
+        }
+    };
     let threshold = match block.get("threshold").unwrap() {
         Value::Float(value) if value.is_finite() && *value > 0.0 && *value <= 1.0 => Some(*value),
         Value::Int(text) => match text.parse::<i64>() {
@@ -443,7 +451,7 @@ fn validate_judgment_block(block: &Value) -> Result<Judgment, PolicyError> {
         ));
     }
     Ok(Judgment {
-        model: model.as_str().unwrap().to_string(),
+        model,
         threshold,
         escalation: escalation.as_str().unwrap().to_string(),
     })

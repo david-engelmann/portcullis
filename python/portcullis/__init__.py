@@ -33,21 +33,31 @@ in Python.
 """
 
 from portcullis._portcullis import (
+    DEFAULT_JUDGE_MODEL,
+    JUDGE_MODELS,
     CallerError,
     LogAppendError,
     LogCorruptionError,
     PortcullisError,
     audit_log,
     check,
+    detect_provider,
+    format_provider_request,
+    normalize_provider_reply,
     read_log,
 )
 
 __all__ = [
     "CallerError",
+    "DEFAULT_JUDGE_MODEL",
+    "JUDGE_MODELS",
     "LogAppendError",
     "LogCorruptionError",
     "PortcullisError",
     "audit_log",
     "check",
+    "detect_provider",
+    "format_provider_request",
+    "normalize_provider_reply",
     "read_log",
 ]

@@ -6,7 +6,9 @@ use crate::reader::strict_parse;
 use crate::referral::number_f64;
 use crate::value::Value;
 use crate::writer::canonical;
-use crate::{AUDIT_FORMAT, DECISION_FORMAT, DECISION_FORMAT_2, JUDGE_MODELS, VERDICT_LABELS};
+use crate::{
+    is_valid_model_name, AUDIT_FORMAT, DECISION_FORMAT, DECISION_FORMAT_2, VERDICT_LABELS,
+};
 use fs2::FileExt;
 use std::collections::HashSet;
 use std::io::Write;
@@ -386,8 +388,7 @@ fn validate_model_record(record: &Value, line_number: usize) -> Result<(), LogCo
             "{what} carries a model field with the wrong fields"
         )));
     }
-    if !matches!(model.get("model").unwrap(), Value::Str(name) if JUDGE_MODELS.contains(&name.as_str()))
-    {
+    if !matches!(model.get("model").unwrap(), Value::Str(name) if is_valid_model_name(name)) {
         return Err(corruption(format!(
             "{what} carries a model name this gate does not carry"
         )));

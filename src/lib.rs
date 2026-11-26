@@ -33,6 +33,7 @@ pub mod errors;
 pub mod evaluate;
 pub mod matching;
 pub mod policy;
+pub mod providers;
 pub mod reader;
 pub mod referral;
 pub mod transport;
@@ -45,8 +46,36 @@ pub const DECISION_FORMAT: &str = "portcullis-decision/1";
 pub const DECISION_FORMAT_2: &str = "portcullis-decision/2";
 pub const AUDIT_FORMAT: &str = "portcullis-audit/1";
 
-/// The models a policy judgment block may name in this build.
-pub const JUDGE_MODELS: [&str; 1] = ["jev-1.13.0"];
+/// The default System One decision model when a policy judgment block omits model under PC-35.
+pub const DEFAULT_JUDGE_MODEL: &str = "jev-1.14.0";
+
+/// Maximum byte length of a valid decision model identifier under PC-35.
+pub const MODEL_NAME_MAX: usize = 128;
+
+/// First-class System One decision model identifiers carried across the five provider families.
+pub const JUDGE_MODELS: [&str; 14] = [
+    "jev-1.14.0",
+    "jev-1.13.0",
+    "gemini-decision-1",
+    "gpt-6-luna",
+    "gpt-oss-safeguard-120b",
+    "gpt-oss-safeguard-20b",
+    "pplx-decider-v1.3",
+    "pplx-decider-latest",
+    "pplx-decider-flash-v1.3",
+    "pplx-decider-flash-latest",
+    "@cf/cloudflare/clef",
+    "@cf/cloudflare/clef-flash",
+    "clef",
+    "clef-flash",
+];
+
+/// Whether a model identifier stands in the 1 through 128 printable ASCII non-whitespace shape of PC-35.
+pub fn is_valid_model_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= MODEL_NAME_MAX
+        && name.bytes().all(|byte| (0x21..=0x7e).contains(&byte))
+}
 
 /// The bound a subprocess transport gives a judge command to
 /// answer in, in seconds, fixed by the library so no caller can
@@ -76,6 +105,10 @@ pub use errors::{
 pub use evaluate::{evaluate, evaluate_with_transport};
 pub use matching::normpath;
 pub use policy::{load_policy, ArgCondition, Judgment, Match, Matcher, Policy, Rule, Substitute};
+pub use providers::{
+    cloudflare_endpoint, cloudflare_route_model, detect_provider, format_provider_request,
+    normalize_provider_reply, wire_model_name, DecisionProvider,
+};
 pub use reader::strict_parse;
 pub use transport::{FixtureTransport, JudgeTransport, SubprocessTransport, TransportError};
 pub use value::Value;
