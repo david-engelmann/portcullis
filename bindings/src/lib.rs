@@ -72,8 +72,8 @@
 use std::path::{Path, PathBuf};
 
 use portcullis_core::{
-    append_decision, evaluate, evaluate_with_transport, load_policy, JudgeTransport, LogReadError,
-    Policy, TransportError, Value,
+    append_decision, canonical, evaluate, evaluate_with_transport, load_policy, DecisionProvider,
+    JudgeTransport, LogReadError, Policy, TransportError, Value, DEFAULT_JUDGE_MODEL, JUDGE_MODELS,
 };
 use pyo3::create_exception;
 use pyo3::exceptions::{PyException, PyTypeError};
@@ -658,11 +658,86 @@ fn audit_log(py: Python<'_>, log: PathBuf, sample: &Bound<'_, PyAny>) -> PyResul
     Ok(dict)
 }
 
+fn extract_py_str(value: &Bound<'_, PyString>) -> PyResult<String> {
+    value
+        .extract::<String>()
+        .map_err(|_| CallerError::new_err(NOT_ENCODABLE_TEXT))
+}
+
+fn parse_provider_arg(
+    provider: Option<&Bound<'_, PyString>>,
+) -> PyResult<Option<DecisionProvider>> {
+    match provider {
+        None => Ok(None),
+        Some(raw_name) => {
+            let name = extract_py_str(raw_name)?;
+            DecisionProvider::from_name(&name)
+                .map(Some)
+                .ok_or_else(|| {
+                    CallerError::new_err(format!(
+                        "unknown decision provider {name}, expected typesafe, google, openai, perplexity, or cloudflare"
+                    ))
+                })
+        }
+    }
+}
+
+/// Detect the canonical System One provider dialect name for a model identifier.
+#[pyfunction]
+fn detect_provider(model: &Bound<'_, PyString>) -> PyResult<&'static str> {
+    let text = extract_py_str(model)?;
+    Ok(portcullis_core::detect_provider(&text).as_str())
+}
+
+/// Format a canonical PC-26 referral request string or dict into provider wire JSON.
+#[pyfunction]
+#[pyo3(signature = (request, provider=None))]
+fn format_provider_request(
+    request: &Bound<'_, PyAny>,
+    provider: Option<&Bound<'_, PyString>>,
+) -> PyResult<String> {
+    let resolved_provider = parse_provider_arg(provider)?;
+    let raw = if let Ok(text) = request.cast::<PyString>() {
+        extract_py_str(text)?
+    } else {
+        let value = to_value(request, 0).map_err(|error| match error {
+            ConvertError::Reader(message) => CallerError::new_err(message),
+            ConvertError::Type(message) => PyTypeError::new_err(message),
+        })?;
+        String::from_utf8(canonical(&value)).unwrap()
+    };
+    portcullis_core::format_provider_request(&raw, resolved_provider)
+        .map_err(|err| CallerError::new_err(err.0))
+}
+
+/// Normalize a raw System One provider response string into canonical PC-26 reply JSON.
+#[pyfunction]
+#[pyo3(signature = (raw_reply, provider=None, model=None))]
+fn normalize_provider_reply(
+    raw_reply: &Bound<'_, PyString>,
+    provider: Option<&Bound<'_, PyString>>,
+    model: Option<&Bound<'_, PyString>>,
+) -> PyResult<String> {
+    let reply_text = extract_py_str(raw_reply)?;
+    let resolved_provider = parse_provider_arg(provider)?;
+    let model_text = match model {
+        Some(m) => Some(extract_py_str(m)?),
+        None => None,
+    };
+    portcullis_core::normalize_provider_reply(&reply_text, resolved_provider, model_text.as_deref())
+        .map_err(|err| CallerError::new_err(err.0))
+}
+
 #[pymodule]
 fn _portcullis(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add("DEFAULT_JUDGE_MODEL", DEFAULT_JUDGE_MODEL)?;
+    m.add("JUDGE_MODELS", PyTuple::new(m.py(), JUDGE_MODELS)?)?;
     m.add_function(wrap_pyfunction!(check, m)?)?;
     m.add_function(wrap_pyfunction!(read_log, m)?)?;
     m.add_function(wrap_pyfunction!(audit_log, m)?)?;
+    m.add_function(wrap_pyfunction!(detect_provider, m)?)?;
+    m.add_function(wrap_pyfunction!(format_provider_request, m)?)?;
+    m.add_function(wrap_pyfunction!(normalize_provider_reply, m)?)?;
     m.add("PortcullisError", m.py().get_type::<PortcullisError>())?;
     m.add("CallerError", m.py().get_type::<CallerError>())?;
     m.add("LogAppendError", m.py().get_type::<LogAppendError>())?;
