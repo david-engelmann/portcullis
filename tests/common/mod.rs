@@ -124,13 +124,17 @@ pub fn dead_stream() -> Stdio {
             return Stdio::from(full);
         }
     }
-    let (reader, mut writer) = std::io::pipe().expect("pipe creation failed");
-    drop(reader);
-    assert!(
-        writer.write_all(b"probe").is_err(),
-        "probe write to closed pipe must fail"
-    );
-    Stdio::from(writer)
+    // Portability adaptation retries pipe creation when a concurrent child
+    // spawn on macOS inherits reader before FIOCLEX closes the race window.
+    for _ in 0..64 {
+        let (reader, mut writer) = std::io::pipe().expect("pipe creation failed");
+        drop(reader);
+        if writer.write_all(b"probe").is_err() {
+            return Stdio::from(writer);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    panic!("probe write to closed pipe must fail")
 }
 
 #[cfg(unix)]

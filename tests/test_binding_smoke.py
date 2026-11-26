@@ -814,3 +814,99 @@ def test_the_depth_bound_holds_at_its_edge_through_the_binding(tmp_path):
     with pytest.raises(portcullis.CallerError) as refused:
         portcullis.check(policy, nested(1001), log, AT)
     assert str(refused.value) == "the document nests too deeply to parse"
+
+
+def test_pc35_default_model_and_provider_codecs(tmp_path):
+    assert portcullis.DEFAULT_JUDGE_MODEL == "jev-1.14.0"
+    assert portcullis.JUDGE_MODELS == (
+        "jev-1.14.0",
+        "jev-1.13.0",
+        "gemini-decision-1",
+        "gpt-6-luna",
+        "gpt-oss-safeguard-120b",
+        "gpt-oss-safeguard-20b",
+        "pplx-decider-v1.3",
+        "pplx-decider-latest",
+        "pplx-decider-flash-v1.3",
+        "pplx-decider-flash-latest",
+        "@cf/cloudflare/clef",
+        "@cf/cloudflare/clef-flash",
+        "clef",
+        "clef-flash",
+    )
+
+    omitted_policy = {
+        "format": "portcullis-policy/1",
+        "default": "deny",
+        "judgment": {"threshold": 0.75, "escalation": "queue"},
+        "rules": [
+            {
+                "id": "judge-shell",
+                "kind": "shell",
+                "action": "judge",
+                "reason": "shell calls whose safety turns on the stated task",
+                "match": {"argv0": {"glob": "*"}},
+            }
+        ],
+    }
+    captured = []
+
+    def google_transport(request):
+        captured.append(request)
+        wire_str = portcullis.format_provider_request(request, provider="google")
+        wire = json.loads(wire_str)
+        assert wire["input"] == request["state"]
+        assert len(wire["questions"]["risk"]["criteria"]) == 10
+        raw_google = json.dumps(
+            {
+                "answers": {
+                    "verdict": {
+                        "choice": "allow",
+                        "probabilities": {
+                            "allow": 0.9,
+                            "deny": 0.04,
+                            "escalate": 0.04,
+                            "other": 0.02,
+                        },
+                    },
+                    "risk": {"score": 1.5, "legend": ["a", "b"]},
+                }
+            }
+        )
+        return portcullis.normalize_provider_reply(
+            raw_google, provider="google", model=request["model"]
+        )
+
+    log = tmp_path / "pc35.jsonl"
+    decision = portcullis.check(
+        omitted_policy,
+        {"format": "portcullis-call/1", "kind": "shell", "argv": ["ls"]},
+        log,
+        AT,
+        transport=google_transport,
+    )
+    assert len(captured) == 1
+    assert captured[0]["model"] == "jev-1.14.0"
+    assert decision["decision"] == "allow"
+    assert decision["model"]["model"] == "jev-1.14.0"
+    assert decision["model"]["risk_score"] == 2.5
+
+    assert portcullis.detect_provider("jev-1.14.0") == "typesafe"
+    assert portcullis.detect_provider("gemini-decision-1") == "google"
+    assert portcullis.detect_provider("gpt-6-luna") == "openai"
+    assert portcullis.detect_provider("pplx-decider-v1.3") == "perplexity"
+    assert portcullis.detect_provider("@cf/cloudflare/clef") == "cloudflare"
+    assert portcullis.detect_provider("clef-preview") == "cloudflare"
+
+    with pytest.raises(portcullis.CallerError):
+        portcullis.format_provider_request(captured[0], provider="unknown")
+    with pytest.raises(portcullis.CallerError):
+        portcullis.normalize_provider_reply(
+            '{"success": false}', provider="cloudflare", model="clef"
+        )
+    with pytest.raises(portcullis.CallerError):
+        portcullis.normalize_provider_reply(
+            "\ud800", provider="typesafe", model="jev-1.14.0"
+        )
+    with pytest.raises(portcullis.CallerError):
+        portcullis.detect_provider("\ud800")
