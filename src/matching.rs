@@ -311,6 +311,17 @@ pub(crate) fn rule_matches(rule: &Rule, call: &Value) -> bool {
                     }
                 }
             }
+            if let Some(path2) = &match_.path2 {
+                let Some(given) = call.get("path2").and_then(|v| v.as_str()) else {
+                    return false;
+                };
+                if !match_text(path2, given) {
+                    let normalized = normpath(given);
+                    if !match_text(path2, &normalized) {
+                        return false;
+                    }
+                }
+            }
             true
         }
         _ => {
