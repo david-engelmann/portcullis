@@ -30,11 +30,14 @@ pub fn append_decision(log_path: &Path, decision: &Value) -> Result<(), LogAppen
     line.push(b'\n');
     let mut last_error: Option<std::io::Error> = None;
     for _ in 0..5 {
-        let mut handle = match std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(log_path)
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true).create(true).append(true);
+        #[cfg(windows)]
         {
+            use std::os::windows::fs::OpenOptionsExt;
+            options.share_mode(0x00000001 | 0x00000002);
+        }
+        let mut handle = match options.open(log_path) {
             Ok(handle) => handle,
             Err(exc) => {
                 return Err(LogAppendError(io_detail(&exc)));

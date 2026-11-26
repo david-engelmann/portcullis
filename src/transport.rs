@@ -94,9 +94,30 @@ impl JudgeTransport for SubprocessTransport {
         use std::io::Read;
         let mut line = canonical(request);
         line.push(b'\n');
-        let mut child = std::process::Command::new("/bin/sh")
-            .arg("-c")
-            .arg(&self.command)
+        let mut command = {
+            #[cfg(unix)]
+            {
+                let mut cmd = std::process::Command::new("/bin/sh");
+                cmd.arg("-c").arg(&self.command);
+                cmd
+            }
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                if self.command.as_bytes().contains(&0) {
+                    return Err(TransportError(
+                        "the judge command could not be started, embedded nul byte".to_string(),
+                    ));
+                }
+                let mut cmd = std::process::Command::new("cmd");
+                cmd.arg("/D")
+                    .arg("/S")
+                    .arg("/C")
+                    .raw_arg(format!("\"{}\"", self.command));
+                cmd
+            }
+        };
+        let mut child = command
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null())

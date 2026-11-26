@@ -12,37 +12,52 @@ pub fn canonical(document: &Value) -> Vec<u8> {
     out.into_bytes()
 }
 
+enum CanonicalStep<'a> {
+    Value(&'a Value),
+    Byte(char),
+    Key(&'a str),
+}
+
 fn write_canonical(document: &Value, out: &mut String) {
-    match document {
-        Value::Null => out.push_str("null"),
-        Value::Bool(true) => out.push_str("true"),
-        Value::Bool(false) => out.push_str("false"),
-        Value::Int(text) => out.push_str(text),
-        Value::Float(value) => out.push_str(&python_float_text(*value)),
-        Value::Str(text) => write_json_string(text, out),
-        Value::Array(items) => {
-            out.push('[');
-            for (index, item) in items.iter().enumerate() {
-                if index > 0 {
-                    out.push(',');
-                }
-                write_canonical(item, out);
-            }
-            out.push(']');
-        }
-        Value::Object(pairs) => {
-            let mut sorted: Vec<&(String, Value)> = pairs.iter().collect();
-            sorted.sort_by(|a, b| a.0.cmp(&b.0));
-            out.push('{');
-            for (index, (key, value)) in sorted.iter().enumerate() {
-                if index > 0 {
-                    out.push(',');
-                }
+    let mut stack = vec![CanonicalStep::Value(document)];
+    while let Some(step) = stack.pop() {
+        match step {
+            CanonicalStep::Byte(ch) => out.push(ch),
+            CanonicalStep::Key(key) => {
                 write_json_string(key, out);
                 out.push(':');
-                write_canonical(value, out);
             }
-            out.push('}');
+            CanonicalStep::Value(value) => match value {
+                Value::Null => out.push_str("null"),
+                Value::Bool(true) => out.push_str("true"),
+                Value::Bool(false) => out.push_str("false"),
+                Value::Int(text) => out.push_str(text),
+                Value::Float(num) => out.push_str(&python_float_text(*num)),
+                Value::Str(text) => write_json_string(text, out),
+                Value::Array(items) => {
+                    out.push('[');
+                    stack.push(CanonicalStep::Byte(']'));
+                    for (index, item) in items.iter().enumerate().rev() {
+                        stack.push(CanonicalStep::Value(item));
+                        if index > 0 {
+                            stack.push(CanonicalStep::Byte(','));
+                        }
+                    }
+                }
+                Value::Object(pairs) => {
+                    let mut sorted: Vec<&(String, Value)> = pairs.iter().collect();
+                    sorted.sort_by(|a, b| a.0.cmp(&b.0));
+                    out.push('{');
+                    stack.push(CanonicalStep::Byte('}'));
+                    for (index, (key, child)) in sorted.into_iter().enumerate().rev() {
+                        stack.push(CanonicalStep::Value(child));
+                        stack.push(CanonicalStep::Key(key));
+                        if index > 0 {
+                            stack.push(CanonicalStep::Byte(','));
+                        }
+                    }
+                }
+            },
         }
     }
 }

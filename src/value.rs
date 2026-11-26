@@ -88,3 +88,25 @@ impl Value {
         }
     }
 }
+
+impl Drop for Value {
+    fn drop(&mut self) {
+        let mut stack: Vec<Value> = Vec::new();
+        match self {
+            Value::Array(items) => stack.extend(std::mem::take(items)),
+            Value::Object(pairs) => {
+                stack.extend(std::mem::take(pairs).into_iter().map(|(_, v)| v));
+            }
+            _ => return,
+        }
+        while let Some(mut node) = stack.pop() {
+            match &mut node {
+                Value::Array(items) => stack.extend(std::mem::take(items)),
+                Value::Object(pairs) => {
+                    stack.extend(std::mem::take(pairs).into_iter().map(|(_, v)| v));
+                }
+                _ => {}
+            }
+        }
+    }
+}

@@ -12,3 +12,4 @@ requires-python = ">=3.9"
 [tool.maturin]
 module-name = "portcullis._portcullis"
 python-source = "../python"
+features = ["extension-module"]
