@@ -39,10 +39,13 @@ def cli_binary():
         text=True,
     )
     target = os.environ.get("CARGO_TARGET_DIR")
+    # Mechanical consequence of Windows portability where Cargo builds
+    # the binary with the .exe suffix.
+    exe = "portcullis.exe" if os.name == "nt" else "portcullis"
     candidates = []
     if target:
-        candidates.append(Path(target) / "debug" / "portcullis")
-    candidates.append(REPO_ROOT / "target" / "debug" / "portcullis")
+        candidates.append(Path(target) / "debug" / exe)
+    candidates.append(REPO_ROOT / "target" / "debug" / exe)
     for candidate in candidates:
         if candidate.exists():
             return candidate
