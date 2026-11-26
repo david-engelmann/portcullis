@@ -24,7 +24,7 @@ use portcullis::{
     read_log, strict_parse, CallerError, LogReadError, Policy, SubprocessTransport, Value,
 };
 
-const MAIN_USAGE: &str = "usage: portcullis [-h] {check,log,audit} ...";
+const MAIN_USAGE: &str = "usage: portcullis [-h] [-V] {check,log,audit} ...";
 const CHECK_USAGE: &str =
     "usage: portcullis check [-h] --policy POLICY --log LOG [--judge COMMAND] [call]";
 const LOG_USAGE: &str = "usage: portcullis log [-h] --log LOG";
@@ -600,6 +600,44 @@ fn run() -> i32 {
             return 2;
         }
         return 0;
+    }
+    if first == "-V" {
+        if let Some(extra) = args.get(1) {
+            return arg_error(
+                MAIN_USAGE,
+                &format!("unrecognized arguments: {}", extra.to_string_lossy()),
+            );
+        }
+        if print_line(&format!("portcullis {}", env!("CARGO_PKG_VERSION"))).is_err() {
+            fail("the version text could not be printed");
+            return 2;
+        }
+        return 0;
+    }
+    if first.starts_with("--") && first != "--" && !reads_as_positional(&first) {
+        let (name_token, inline) = split_inline(&args[0]);
+        if name_token.len() >= 3 && "--version".starts_with(&name_token) {
+            if let Some(value) = inline {
+                return arg_error(
+                    MAIN_USAGE,
+                    &format!(
+                        "argument --version: ignored explicit argument '{}'",
+                        value.to_string_lossy()
+                    ),
+                );
+            }
+            if let Some(extra) = args.get(1) {
+                return arg_error(
+                    MAIN_USAGE,
+                    &format!("unrecognized arguments: {}", extra.to_string_lossy()),
+                );
+            }
+            if print_line(&format!("portcullis {}", env!("CARGO_PKG_VERSION"))).is_err() {
+                fail("the version text could not be printed");
+                return 2;
+            }
+            return 0;
+        }
     }
     match first.as_str() {
         "check" | "log" | "audit" => match parse_subcommand(&first, &args[1..]) {

@@ -3489,3 +3489,305 @@ fn canonical_and_drop_at_one_thousand_levels_run_on_a_narrow_stack() {
         .unwrap();
     handle.join().unwrap();
 }
+
+fn move_call(path: &str, path2: &str) -> Value {
+    Value::obj(vec![
+        ("format", s("portcullis-call/1")),
+        ("kind", s("file")),
+        ("operation", s("move")),
+        ("path", s(path)),
+        ("path2", s(path2)),
+    ])
+}
+
+#[test]
+fn pc36_destination_path2_matches_raw_and_normalized_moves_and_ignores_single_path_ops() {
+    let contract = std::fs::read_to_string(root().join("CONTRACT.md")).unwrap();
+    for phrase in [
+        "### Obligation PC-36 covers destination path matching and the command line version flag",
+        "the match object of a file rule may carry an optional path2 matcher beside operation and path",
+        "A file call of operation read, write, delete, or list carries no path2 and never matches a rule carrying a path2 condition",
+    ] {
+        assert!(contract.contains(phrase), "missing phrase {phrase}");
+    }
+
+    // Raw and normpath matching across exact, prefix, and glob, with deny beating allow and rewrite.
+    let rules = vec![
+        plain_rule(
+            "deny-etc-dest",
+            "file",
+            "deny",
+            Value::obj(vec![("path2", matcher("prefix", "/etc/"))]),
+        ),
+        plain_rule(
+            "deny-secret-glob",
+            "file",
+            "deny",
+            Value::obj(vec![("path2", matcher("glob", "/work/**/secret*.env"))]),
+        ),
+        rule(
+            "stage-release",
+            "file",
+            "rewrite",
+            Value::obj(vec![
+                ("path", matcher("prefix", "/work/build/")),
+                ("path2", matcher("exact", "/work/dist/app")),
+            ]),
+            "redirect release move to staging",
+            Some(Value::obj(vec![("path2", s("/work/staging/app"))])),
+        ),
+        plain_rule(
+            "allow-work-moves",
+            "file",
+            "allow",
+            Value::obj(vec![
+                ("path", matcher("prefix", "/work/")),
+                ("path2", matcher("prefix", "/work/")),
+            ]),
+        ),
+    ];
+
+    // Traversal onto /etc via .. in path2 is caught by normpath(path2) even though raw path2 starts with /work/.
+    let escaped = decide(
+        &move_call("/work/tmp.txt", "/work/sub/../../etc/passwd"),
+        rules.clone(),
+        "allow",
+    );
+    assert_eq!(field(&escaped, "decision"), &s("deny"));
+    assert_eq!(
+        field(&escaped, "source"),
+        &Value::obj(vec![("type", s("rule")), ("rule", s("deny-etc-dest"))])
+    );
+
+    // Raw path2 match when normalized form drops a dot segment.
+    let raw_only_rule = vec![plain_rule(
+        "raw-dot-dest",
+        "file",
+        "deny",
+        Value::obj(vec![("path2", matcher("exact", "/work/./marker.txt"))]),
+    )];
+    let raw_hit = decide(
+        &move_call("/work/src.txt", "/work/./marker.txt"),
+        raw_only_rule,
+        "allow",
+    );
+    assert_eq!(field(&raw_hit, "decision"), &s("deny"));
+
+    // Glob match on path2 across raw-only and normalized-only forms.
+    let raw_glob_rule = vec![plain_rule(
+        "deny-raw-dot-glob",
+        "file",
+        "deny",
+        Value::obj(vec![("path2", matcher("glob", "/work/./*.env"))]),
+    )];
+    let raw_glob_hit = decide(
+        &move_call("/work/a.txt", "/work/./secret.env"),
+        raw_glob_rule,
+        "allow",
+    );
+    assert_eq!(field(&raw_glob_hit, "decision"), &s("deny"));
+    assert_eq!(
+        field(&raw_glob_hit, "source"),
+        &Value::obj(vec![("type", s("rule")), ("rule", s("deny-raw-dot-glob"))])
+    );
+
+    let norm_glob_hit = decide(
+        &move_call("/work/a.txt", "/outside/../work/nested/dir/secret-prod.env"),
+        rules.clone(),
+        "allow",
+    );
+    assert_eq!(field(&norm_glob_hit, "decision"), &s("deny"));
+    assert_eq!(
+        field(&norm_glob_hit, "source"),
+        &Value::obj(vec![("type", s("rule")), ("rule", s("deny-secret-glob"))])
+    );
+
+    // Deny rules matching path2 beat earlier allow and earlier rewrite rules in policy order.
+    let allow_before_deny = vec![
+        plain_rule(
+            "allow-any-move",
+            "file",
+            "allow",
+            Value::obj(vec![("operation", matcher("exact", "move"))]),
+        ),
+        plain_rule(
+            "deny-late-etc",
+            "file",
+            "deny",
+            Value::obj(vec![("path2", matcher("prefix", "/etc/"))]),
+        ),
+    ];
+    let deny_over_allow = decide(
+        &move_call("/work/a.txt", "/work/../etc/hosts"),
+        allow_before_deny,
+        "allow",
+    );
+    assert_eq!(field(&deny_over_allow, "decision"), &s("deny"));
+    assert_eq!(
+        field(&deny_over_allow, "source"),
+        &Value::obj(vec![("type", s("rule")), ("rule", s("deny-late-etc"))])
+    );
+    assert_eq!(field(&deny_over_allow, "rewritten_call"), &Value::Null);
+
+    let rewrite_before_deny = vec![
+        rule(
+            "rewrite-work-move",
+            "file",
+            "rewrite",
+            Value::obj(vec![("path", matcher("prefix", "/work/"))]),
+            "redirect work moves",
+            Some(Value::obj(vec![("path2", s("/work/staging/out"))])),
+        ),
+        plain_rule(
+            "deny-late-secret",
+            "file",
+            "deny",
+            Value::obj(vec![("path2", matcher("glob", "/work/**/secret*.env"))]),
+        ),
+    ];
+    let deny_over_rewrite = decide(
+        &move_call("/work/a.txt", "/work/sub/secret-prod.env"),
+        rewrite_before_deny,
+        "allow",
+    );
+    assert_eq!(field(&deny_over_rewrite, "decision"), &s("deny"));
+    assert_eq!(
+        field(&deny_over_rewrite, "source"),
+        &Value::obj(vec![("type", s("rule")), ("rule", s("deny-late-secret"))])
+    );
+    assert_eq!(field(&deny_over_rewrite, "rewritten_call"), &Value::Null);
+
+    // Combined path + path2 rewrite rule requires both path and path2 to match.
+    let rewritten = decide(
+        &move_call("/work/build/bin", "/work/dist/../dist/app"),
+        rules.clone(),
+        "deny",
+    );
+    assert_eq!(field(&rewritten, "decision"), &s("rewrite"));
+    assert_eq!(
+        field(field(&rewritten, "rewritten_call"), "path2"),
+        &s("/work/staging/app")
+    );
+
+    // Move with matching path2 but non-matching path misses stage-release and hits allow-work-moves.
+    let allowed = decide(
+        &move_call("/work/other/bin", "/work/dist/app"),
+        rules.clone(),
+        "deny",
+    );
+    assert_eq!(field(&allowed, "decision"), &s("allow"));
+    assert_eq!(
+        field(&allowed, "source"),
+        &Value::obj(vec![("type", s("rule")), ("rule", s("allow-work-moves"))])
+    );
+
+    // Single-path file operations never match a rule carrying path2.
+    let path2_allow = vec![plain_rule(
+        "allow-dest-only",
+        "file",
+        "allow",
+        Value::obj(vec![
+            ("path", matcher("prefix", "/work/")),
+            ("path2", matcher("glob", "*")),
+        ]),
+    )];
+    for op in ["read", "write", "delete", "list"] {
+        let dec = decide(
+            &file_call(op, "/work/file.txt"),
+            path2_allow.clone(),
+            "deny",
+        );
+        assert_eq!(field(&dec, "decision"), &s("deny"), "op {op}");
+        assert_eq!(
+            field(&dec, "source"),
+            &Value::obj(vec![("type", s("default"))]),
+            "op {op}"
+        );
+    }
+}
+
+#[test]
+fn pc36_policy_load_rejects_invalid_path2_matchers_and_non_file_path2_keys() {
+    for bad_kind in ["shell", "network"] {
+        let doc = policy_doc(
+            vec![plain_rule(
+                "wrong-kind-path2",
+                bad_kind,
+                "deny",
+                Value::obj(vec![("path2", matcher("prefix", "/etc/"))]),
+            )],
+            "deny",
+        );
+        let err = load_policy(&doc).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "the match of rule wrong-kind-path2 carries the unknown field path2"
+        );
+    }
+
+    for bad_matcher in [
+        Value::obj(vec![]),
+        Value::obj(vec![("exact", s("/a")), ("prefix", s("/a"))]),
+        Value::obj(vec![("regex", s(".*"))]),
+        Value::obj(vec![("exact", Value::int(7))]),
+    ] {
+        let doc = policy_doc(
+            vec![plain_rule(
+                "bad-path2",
+                "file",
+                "deny",
+                Value::obj(vec![("path2", bad_matcher)]),
+            )],
+            "deny",
+        );
+        let err = load_policy(&doc).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("the match of rule bad-path2 on path2"),
+            "{}",
+            err
+        );
+    }
+}
+
+#[test]
+fn pc36_cli_version_flag_prints_version_and_refuses_bad_forms() {
+    let expected = format!("portcullis {}\n", env!("CARGO_PKG_VERSION"));
+    for flag in ["-V", "--version", "--ver", "--v"] {
+        let out = run_cli(&[flag], None);
+        assert_eq!(out.status, 0, "flag {flag} stderr {}", out.stderr);
+        assert_eq!(out.stdout, expected);
+        assert_eq!(out.stderr, "");
+    }
+
+    for (bad_args, expected_err) in [
+        (&["--"][..], "invalid choice: --"),
+        (
+            &["--version=1"][..],
+            "argument --version: ignored explicit argument '1'",
+        ),
+        (
+            &["--version="][..],
+            "argument --version: ignored explicit argument ''",
+        ),
+        (&["--version", "check"][..], "unrecognized arguments: check"),
+        (&["-V", "check"][..], "unrecognized arguments: check"),
+        (&["-V=1"][..], "invalid choice: -V=1"),
+    ] {
+        let out = run_cli(bad_args, None);
+        assert_eq!(out.status, 2, "{bad_args:?}");
+        assert_eq!(out.stdout, "");
+        assert!(out.stderr.contains(expected_err), "{}", out.stderr);
+    }
+
+    for flag in ["-V", "--version"] {
+        let dead = run_cli_with_dead_stdout(&[flag]);
+        assert_eq!(dead.status, 2, "flag {flag}");
+        assert!(
+            dead.stderr
+                .contains("error: the version text could not be printed"),
+            "{}",
+            dead.stderr
+        );
+    }
+}

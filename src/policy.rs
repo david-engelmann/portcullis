@@ -32,6 +32,7 @@ pub struct Match {
     pub args: Vec<ArgCondition>,
     pub operation: Option<Matcher>,
     pub path: Option<Matcher>,
+    pub path2: Option<Matcher>,
     pub method: Option<Matcher>,
     pub host: Option<Matcher>,
     pub port: Option<i64>,
@@ -200,7 +201,7 @@ fn validate_match(kind: &str, match_value: &Value, rule_id: &str) -> Result<Matc
             }
         }
         "file" => {
-            check_policy_keys(match_value, &["operation", "path"], &what)?;
+            check_policy_keys(match_value, &["operation", "path", "path2"], &what)?;
             if let Some(operation) = match_value.get("operation") {
                 result.operation = Some(validate_matcher(
                     operation,
@@ -214,6 +215,9 @@ fn validate_match(kind: &str, match_value: &Value, rule_id: &str) -> Result<Matc
                     &format!("{what} on the path"),
                     false,
                 )?);
+            }
+            if let Some(path2) = match_value.get("path2") {
+                result.path2 = Some(validate_matcher(path2, &format!("{what} on path2"), false)?);
             }
         }
         _ => {
