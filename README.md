@@ -13,15 +13,20 @@ exit 1
 
 ## Install
 
-Portcullis builds from source with Cargo. Clone the repo and install the binary onto your path.
+Install the CLI from Crates.io or from source with Cargo, or install the Python package with pip. Pass `--bin portcullis` with Cargo so only the `portcullis` binary is installed into `~/.cargo/bin`.
+
+```
+cargo install portcullis --bin portcullis
+pip install portcullis
+```
+
+From a local checkout, install the binary with Cargo.
 
 ```
 git clone https://github.com/david-engelmann/portcullis.git
 cd portcullis
 cargo install --path . --bin portcullis
 ```
-
-The install puts the portcullis binary in the Cargo bin directory. On a default install that directory is ~/.cargo/bin, and it must stand on your PATH for the portcullis command to resolve.
 
 ## Quickstart
 
@@ -193,13 +198,25 @@ deny {'type': 'rule', 'rule': 'deny-rm'}
 1
 ```
 
+### System One providers and destination path matching
+
+Portcullis defaults `judgment.model` to `jev-1.14.0` when omitted and ships pure deterministic provider wire codecs in its `providers` module and the Python binding across five System One decision model families, TypeSafe (`jev-1.14.0`, `jev-1.13.0`), Google (`gemini-decision-1`), OpenAI (`gpt-6-luna`, `gpt-oss-safeguard-120b`, `gpt-oss-safeguard-20b`), Perplexity (`pplx-decider-v1.3`, `pplx-decider-latest`, `pplx-decider-flash-v1.3`, `pplx-decider-flash-latest`), and Cloudflare (`@cf/cloudflare/clef`, `@cf/cloudflare/clef-flash`, `clef`, `clef-flash`). The standalone standard-library helper `examples/decision_judge.py` reads the provider API key from the environment (such as `TYPESAFE_API_KEY`, `GEMINI_API_KEY`, or `DECISION_API_KEY`) and connects `--judge` to the HTTPS endpoint matching `judgment.model` while keeping the core library free of network and credential dependencies. File rules also accept an optional `path2` matcher (`exact`, `prefix`, or `glob`) to guard raw and lexically normalized destination paths on `move` calls.
+
+```
+TYPESAFE_API_KEY='SYNTHETIC-TEST-VALUE-key' portcullis check --policy judge-policy.json --log audit.jsonl --judge "python3 examples/decision_judge.py --provider typesafe" call-judge.json
+```
+
+### Optional composition
+
+Portcullis is completely standalone and depends on zero sibling packages. In hosts that combine multiple tools, a harness can check `arvin` for the current run stage, pass each proposed tool call through `portcullis check`, redeem scoped short-lived credentials through `deadbolt` only after an `allow` decision, and execute approved commands inside a disposable `mayfly` sandbox.
+
 ## Status
 
 The gate, the referral, and the sampling audit all work today. Portcullis checks shell and file and network calls against a policy, refers the calls its rules leave open when a judge is configured, appends every decision it delivers to an audit log, and samples that log on request. The Python binding carries the same operations.
 
 Portcullis executes nothing and wires into no harness. A harness or a person presents each call and acts on each decision, and no model access is bundled, so a referring policy needs a judge program from the operator or a transport handed to the binding.
 
-The contract lives in CONTRACT.md. Obligations S1 to S5 stand as the setup record. Obligations PC-1 to PC-12 state the behaviour of the gate, PC-13 to PC-20 state the behaviour of the referral and the judgment, PC-21 to PC-25 state the behaviour of the sampling audit, and PC-26 states the interior of the referral, and PC-27 to PC-29 state the doctrine the gathered population supports, and PC-30 to PC-32 state the successor doctrine the two gatherings support, and PC-33 states the bar the recorded population supports, and PC-34 states the seam under a failed consultation, and PC-35 states the default model and the provider wire codecs, and PC-36 states destination path matching on move calls and the version flag.
+The contract lives in CONTRACT.md. Obligations S1 to S5 stand as the setup record. Obligations PC-1 to PC-12 state the behaviour of the gate, PC-13 to PC-20 state the behaviour of the referral and the judgment, PC-21 to PC-25 state the behaviour of the sampling audit, and PC-26 states the interior of the referral, and PC-27 to PC-29 state the doctrine the gathered population supports, and PC-30 to PC-32 state the successor doctrine the two gatherings support, and PC-33 states the bar the recorded population supports, and PC-34 states the seam under a failed consultation, and PC-35 states the default model and the provider wire codecs, and PC-36 states destination path matching on move calls and the version flag, and PC-37 states the v0.2.0 release packaging and type stub rules.
 
 The continuous integration workflow runs the full suite and the Python binding smoke on every push and pull request, and both checks are required on main.
 

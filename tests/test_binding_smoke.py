@@ -956,3 +956,62 @@ def test_pc36_path2_matching_through_the_binding(tmp_path):
     assert allowed_read["decision"] == "allow"
     assert allowed_read["source"] == {"type": "default"}
 
+
+def test_pc37_version_and_pep561_type_stubs(tmp_path):
+    import ast
+    import subprocess
+    import sys
+    import zipfile
+
+    assert portcullis.__version__ == "0.2.0"
+    assert "__version__" in portcullis.__all__
+    pkg_dir = Path(portcullis.__file__).resolve().parent
+    assert (pkg_dir / "py.typed").is_file()
+    stub_path = pkg_dir / "__init__.pyi"
+    assert stub_path.is_file()
+
+    repo_root = Path(__file__).resolve().parents[1]
+    wheel_dir = tmp_path / "wheels"
+    wheel_dir.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "maturin",
+            "build",
+            "--offline",
+            "--locked",
+            "--out",
+            str(wheel_dir),
+            "--manifest-path",
+            str(repo_root / "bindings" / "Cargo.toml"),
+        ],
+        cwd=str(repo_root),
+        check=True,
+    )
+    wheels = list(wheel_dir.glob("portcullis-0.2.0-*.whl"))
+    assert len(wheels) == 1, wheels
+    with zipfile.ZipFile(wheels[0]) as zf:
+        names = set(zf.namelist())
+        for req in (
+            "portcullis/__init__.py",
+            "portcullis/py.typed",
+            "portcullis/__init__.pyi",
+        ):
+            assert req in names, names
+        assert any(n.endswith("/LICENSE") or n == "LICENSE" for n in names), names
+        stub_text = zf.read("portcullis/__init__.pyi").decode("utf-8")
+
+    assert "request: str | dict[str, Any]" in stub_text
+    tree = ast.parse(stub_text)
+    declared = set()
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+            declared.add(node.name)
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            declared.add(node.target.id)
+    assert declared - {"__all__"} == set(portcullis.__all__)
+    for name in portcullis.__all__:
+        assert hasattr(portcullis, name), name
+
+
