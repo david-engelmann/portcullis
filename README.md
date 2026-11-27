@@ -13,11 +13,11 @@ exit 1
 
 ## Install
 
-Install the CLI from Crates.io or from source with Cargo, or install the Python package with pip. Pass `--bin portcullis` with Cargo so only the `portcullis` binary is installed into `~/.cargo/bin`.
+Install the CLI from the `v0.2.0` git tag with Cargo, download prebuilt Linux, macOS, and Windows binary archives or `cp39-abi3` Python wheels from [the v0.2.0 GitHub Release](https://github.com/david-engelmann/portcullis/releases/tag/v0.2.0), or install the Python binding from the `v0.2.0` git tag with `pip`. Pass `--bin portcullis` with Cargo so only the `portcullis` binary is installed into `~/.cargo/bin`.
 
 ```
-cargo install portcullis --bin portcullis
-pip install portcullis
+cargo install --git https://github.com/david-engelmann/portcullis.git --tag v0.2.0 --bin portcullis
+pip install "git+https://github.com/david-engelmann/portcullis.git@v0.2.0"
 ```
 
 From a local checkout, install the binary with Cargo.
@@ -209,6 +209,16 @@ TYPESAFE_API_KEY='SYNTHETIC-TEST-VALUE-key' portcullis check --policy judge-poli
 ### Optional composition
 
 Portcullis is completely standalone and depends on zero sibling packages. In hosts that combine multiple tools, a harness can check `arvin` for the current run stage, pass each proposed tool call through `portcullis check`, redeem scoped short-lived credentials through `deadbolt` only after an `allow` decision, and execute approved commands inside a disposable `mayfly` sandbox.
+
+## Guides and examples
+
+Read [docs/GUIDE.md](docs/GUIDE.md) for the operator and policy authoring guide covering fixed evaluation order, shell and file and network matchers, `move` destination `path2` normalization, `rewrite` staging, System One referrals, and audit log sampling. Start from the coding-agent policy template in [examples/policies/coding_agent_policy.json](examples/policies/coding_agent_policy.json), run the self-contained Rust and Python quickstarters in [examples/quickstart.rs](examples/quickstart.rs) and [examples/agent_gate.py](examples/agent_gate.py), or connect live System One providers through [examples/decision_judge.py](examples/decision_judge.py).
+
+```
+cargo build --bin portcullis
+cargo run --example quickstart
+python3 examples/agent_gate.py
+```
 
 ## Status
 

@@ -1,0 +1,347 @@
+{
+  "format": "portcullis-policy/1",
+  "default": "deny",
+  "judgment": {
+    "model": "jev-1.14.0",
+    "threshold": 0.75,
+    "escalation": "queue"
+  },
+  "rules": [
+    {
+      "id": "deny-rm",
+      "kind": "shell",
+      "action": "deny",
+      "reason": "direct file removal through rm is blocked",
+      "match": {
+        "argv0": {
+          "exact": "rm"
+        }
+      }
+    },
+    {
+      "id": "deny-rm-path",
+      "kind": "shell",
+      "action": "deny",
+      "reason": "path-qualified file removal through rm is blocked",
+      "match": {
+        "argv0": {
+          "glob": "*/rm"
+        }
+      }
+    },
+    {
+      "id": "deny-sudo",
+      "kind": "shell",
+      "action": "deny",
+      "reason": "privilege escalation through sudo is blocked",
+      "match": {
+        "argv0": {
+          "exact": "sudo"
+        }
+      }
+    },
+    {
+      "id": "deny-sudo-path",
+      "kind": "shell",
+      "action": "deny",
+      "reason": "path-qualified privilege escalation through sudo is blocked",
+      "match": {
+        "argv0": {
+          "glob": "*/sudo"
+        }
+      }
+    },
+    {
+      "id": "deny-ssh-keys",
+      "kind": "file",
+      "action": "deny",
+      "reason": "reading or modifying ssh keys is blocked",
+      "match": {
+        "path": {
+          "glob": "*/.ssh/*"
+        }
+      }
+    },
+    {
+      "id": "deny-ssh-dir",
+      "kind": "file",
+      "action": "deny",
+      "reason": "listing or modifying ssh directories is blocked",
+      "match": {
+        "path": {
+          "glob": "*/.ssh"
+        }
+      }
+    },
+    {
+      "id": "deny-ssh-keys-rel",
+      "kind": "file",
+      "action": "deny",
+      "reason": "reading or modifying relative ssh keys is blocked",
+      "match": {
+        "path": {
+          "glob": ".ssh/*"
+        }
+      }
+    },
+    {
+      "id": "deny-ssh-dir-rel",
+      "kind": "file",
+      "action": "deny",
+      "reason": "listing or modifying relative ssh directory is blocked",
+      "match": {
+        "path": {
+          "exact": ".ssh"
+        }
+      }
+    },
+    {
+      "id": "deny-move-into-ssh",
+      "kind": "file",
+      "action": "deny",
+      "reason": "moving files into ssh directories is blocked",
+      "match": {
+        "operation": {
+          "exact": "move"
+        },
+        "path2": {
+          "glob": "*/.ssh/*"
+        }
+      }
+    },
+    {
+      "id": "deny-move-into-ssh-rel",
+      "kind": "file",
+      "action": "deny",
+      "reason": "moving files into relative ssh directories is blocked",
+      "match": {
+        "operation": {
+          "exact": "move"
+        },
+        "path2": {
+          "glob": ".ssh/*"
+        }
+      }
+    },
+    {
+      "id": "deny-dotenv-nested",
+      "kind": "file",
+      "action": "deny",
+      "reason": "reading or modifying dotenv files is blocked",
+      "match": {
+        "path": {
+          "glob": "*/.env*"
+        }
+      }
+    },
+    {
+      "id": "deny-dotenv-root",
+      "kind": "file",
+      "action": "deny",
+      "reason": "reading or modifying root dotenv files is blocked",
+      "match": {
+        "path": {
+          "glob": ".env*"
+        }
+      }
+    },
+    {
+      "id": "deny-move-into-dotenv-nested",
+      "kind": "file",
+      "action": "deny",
+      "reason": "moving files over dotenv files is blocked",
+      "match": {
+        "operation": {
+          "exact": "move"
+        },
+        "path2": {
+          "glob": "*/.env*"
+        }
+      }
+    },
+    {
+      "id": "deny-move-into-dotenv-root",
+      "kind": "file",
+      "action": "deny",
+      "reason": "moving files over root dotenv files is blocked",
+      "match": {
+        "operation": {
+          "exact": "move"
+        },
+        "path2": {
+          "glob": ".env*"
+        }
+      }
+    },
+    {
+      "id": "deny-move-into-etc",
+      "kind": "file",
+      "action": "deny",
+      "reason": "moving files into system configuration is blocked",
+      "match": {
+        "operation": {
+          "exact": "move"
+        },
+        "path2": {
+          "prefix": "/etc/"
+        }
+      }
+    },
+    {
+      "id": "deny-parent-exact",
+      "kind": "file",
+      "action": "deny",
+      "reason": "parent directory traversal is blocked",
+      "match": {
+        "path": {
+          "exact": ".."
+        }
+      }
+    },
+    {
+      "id": "deny-parent-prefix",
+      "kind": "file",
+      "action": "deny",
+      "reason": "leading parent directory traversal is blocked",
+      "match": {
+        "path": {
+          "prefix": "../"
+        }
+      }
+    },
+    {
+      "id": "deny-parent-mid",
+      "kind": "file",
+      "action": "deny",
+      "reason": "embedded parent directory traversal is blocked",
+      "match": {
+        "path": {
+          "glob": "*/../*"
+        }
+      }
+    },
+    {
+      "id": "deny-parent-tail",
+      "kind": "file",
+      "action": "deny",
+      "reason": "trailing parent directory traversal is blocked",
+      "match": {
+        "path": {
+          "glob": "*/.."
+        }
+      }
+    },
+    {
+      "id": "deny-move-parent-exact",
+      "kind": "file",
+      "action": "deny",
+      "reason": "move destination parent traversal is blocked",
+      "match": {
+        "operation": {
+          "exact": "move"
+        },
+        "path2": {
+          "exact": ".."
+        }
+      }
+    },
+    {
+      "id": "deny-move-parent-prefix",
+      "kind": "file",
+      "action": "deny",
+      "reason": "move destination leading parent traversal is blocked",
+      "match": {
+        "operation": {
+          "exact": "move"
+        },
+        "path2": {
+          "prefix": "../"
+        }
+      }
+    },
+    {
+      "id": "deny-move-parent-mid",
+      "kind": "file",
+      "action": "deny",
+      "reason": "move destination embedded parent traversal is blocked",
+      "match": {
+        "operation": {
+          "exact": "move"
+        },
+        "path2": {
+          "glob": "*/../*"
+        }
+      }
+    },
+    {
+      "id": "deny-move-parent-tail",
+      "kind": "file",
+      "action": "deny",
+      "reason": "move destination trailing parent traversal is blocked",
+      "match": {
+        "operation": {
+          "exact": "move"
+        },
+        "path2": {
+          "glob": "*/.."
+        }
+      }
+    },
+    {
+      "id": "stage-output-writes",
+      "kind": "file",
+      "action": "rewrite",
+      "reason": "agent output writes land in staging first",
+      "match": {
+        "operation": {
+          "exact": "write"
+        },
+        "path": {
+          "prefix": "/work/out/"
+        }
+      },
+      "substitute": {
+        "path": "/work/staging/out.txt"
+      }
+    },
+    {
+      "id": "allow-work-read",
+      "kind": "file",
+      "action": "allow",
+      "reason": "reading workspace files is permitted",
+      "match": {
+        "operation": {
+          "exact": "read"
+        },
+        "path": {
+          "prefix": "/work/"
+        }
+      }
+    },
+    {
+      "id": "allow-work-list",
+      "kind": "file",
+      "action": "allow",
+      "reason": "listing workspace directories is permitted",
+      "match": {
+        "operation": {
+          "exact": "list"
+        },
+        "path": {
+          "prefix": "/work/"
+        }
+      }
+    },
+    {
+      "id": "judge-shell",
+      "kind": "shell",
+      "action": "judge",
+      "reason": "open shell commands are referred to the decision model",
+      "match": {
+        "argv0": {
+          "glob": "*"
+        }
+      }
+    }
+  ]
+}
