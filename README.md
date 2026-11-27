@@ -13,15 +13,20 @@ exit 1
 
 ## Install
 
-Portcullis builds from source with Cargo. Clone the repo and install the binary onto your path.
+Install the CLI from Crates.io or from source with Cargo, or install the Python package with pip. Pass `--bin portcullis` with Cargo so only the `portcullis` binary is installed into `~/.cargo/bin`.
+
+```
+cargo install portcullis --bin portcullis
+pip install portcullis
+```
+
+From a local checkout, install the binary with Cargo.
 
 ```
 git clone https://github.com/david-engelmann/portcullis.git
 cd portcullis
 cargo install --path . --bin portcullis
 ```
-
-The install puts the portcullis binary in the Cargo bin directory. On a default install that directory is ~/.cargo/bin, and it must stand on your PATH for the portcullis command to resolve.
 
 ## Quickstart
 
@@ -192,6 +197,18 @@ print(len(portcullis.read_log("binding-audit.jsonl")))
 deny {'type': 'rule', 'rule': 'deny-rm'}
 1
 ```
+
+### System One providers and destination path matching
+
+Portcullis defaults `judgment.model` to `jev-1.14.0` when omitted and ships pure deterministic provider wire codecs in its `providers` module and the Python binding across five System One decision model families, TypeSafe (`jev-1.14.0`, `jev-1.13.0`), Google (`gemini-decision-1`), OpenAI (`gpt-6-luna`, `gpt-oss-safeguard-120b`, `gpt-oss-safeguard-20b`), Perplexity (`pplx-decider-v1.3`, `pplx-decider-latest`, `pplx-decider-flash-v1.3`, `pplx-decider-flash-latest`), and Cloudflare (`@cf/cloudflare/clef`, `@cf/cloudflare/clef-flash`, `clef`, `clef-flash`). The standalone standard-library helper `examples/decision_judge.py` reads the provider API key from the environment (such as `TYPESAFE_API_KEY`, `GEMINI_API_KEY`, or `DECISION_API_KEY`) and connects `--judge` to the HTTPS endpoint matching `judgment.model` while keeping the core library free of network and credential dependencies. File rules also accept an optional `path2` matcher (`exact`, `prefix`, or `glob`) to guard raw and lexically normalized destination paths on `move` calls.
+
+```
+TYPESAFE_API_KEY='SYNTHETIC-TEST-VALUE-key' portcullis check --policy judge-policy.json --log audit.jsonl --judge "python3 examples/decision_judge.py --provider typesafe" call-judge.json
+```
+
+### Optional composition
+
+Portcullis is completely standalone and depends on zero sibling packages. In hosts that combine multiple tools, a harness can check `arvin` for the current run stage, pass each proposed tool call through `portcullis check`, redeem scoped short-lived credentials through `deadbolt` only after an `allow` decision, and execute approved commands inside a disposable `mayfly` sandbox.
 
 ## Status
 
