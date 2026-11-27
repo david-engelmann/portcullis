@@ -1,9 +1,12 @@
 [package]
 name = "portcullis-bindings"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
+rust-version = "1.91"
+publish = false
 description = "The thin Python binding over the portcullis crate, carrying no logic of its own"
 license = "MIT"
+repository = "https://github.com/david-engelmann/portcullis"
 
 [lib]
 name = "portcullis"

@@ -54,6 +54,7 @@ __all__ = [
     "LogAppendError",
     "LogCorruptionError",
     "PortcullisError",
+    "__version__",
     "audit_log",
     "check",
     "detect_provider",
@@ -61,3 +62,5 @@ __all__ = [
     "normalize_provider_reply",
     "read_log",
 ]
+
+__version__ = "0.2.0"

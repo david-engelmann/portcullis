@@ -1,0 +1,31 @@
+[build-system]
+requires = ["maturin>=1.5,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "portcullis"
+version = "0.2.0"
+description = "A local tool-call firewall that sits between an agent and your machine, allowing, denying, or rewriting shell, file, and network calls by rule, and referring the calls its rules leave open to a decision model."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Rust",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://github.com/david-engelmann/portcullis"
+Repository = "https://github.com/david-engelmann/portcullis"
+Changelog = "https://github.com/david-engelmann/portcullis/blob/main/CHANGELOG.md"
+Issues = "https://github.com/david-engelmann/portcullis/issues"
+
+[tool.maturin]
+manifest-path = "bindings/Cargo.toml"
+module-name = "portcullis._portcullis"
+python-source = "python"
+features = ["extension-module"]
+exclude = ["tests/fixtures/**", ".github/**"]
