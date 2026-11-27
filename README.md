@@ -1,10 +1,14 @@
 # portcullis
 
+![portcullis overview](docs/assets/hero.svg)
+
 A local tool-call firewall that sits between an agent and your machine, allowing, denying, or rewriting shell, file, and network calls by rule, and referring the calls its rules leave open to a decision model.
 
 Portcullis is one local binary backed by a Rust library, with a thin Python binding over the same library. A harness or a person hands it a policy and one structured call record. It answers with one decision record, appends that record to an audit log, and executes nothing itself.
 
-[![CI](https://github.com/david-engelmann/portcullis/actions/workflows/ci.yml/badge.svg)](https://github.com/david-engelmann/portcullis/actions/workflows/ci.yml)
+[![CI](https://github.com/david-engelmann/portcullis/actions/workflows/ci.yml/badge.svg)](https://github.com/david-engelmann/portcullis/actions/workflows/ci.yml) [![Portability](https://github.com/david-engelmann/portcullis/actions/workflows/portability.yml/badge.svg)](https://github.com/david-engelmann/portcullis/actions/workflows/portability.yml) [![Release v0.2.0](https://img.shields.io/github/v/release/david-engelmann/portcullis)](https://github.com/david-engelmann/portcullis/releases/tag/v0.2.0) [![Rust 1.91+](https://img.shields.io/badge/rust-1.91%2B-orange.svg)](Cargo.toml) [![License MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+[Install](#install) | [Quickstart](#quickstart) | [Architecture](#architecture) | [Usage](#usage) | [Guides and examples](#guides-and-examples) | [Operator Guide](docs/GUIDE.md) | [Contributing](CONTRIBUTING.md) | [Contract](CONTRACT.md)
 
 ```
 {"at":"2026-11-07T08:12:42.201571+00:00","call_digest":"sha256:85b02c27042e96633fb1bf6f809b37fcfa3a1cc8afdcb51dacd2e601752bb23c","decision":"deny","format":"portcullis-decision/1","interpreter":false,"reason":"removal is not run directly","rewritten_call":null,"source":{"rule":"deny-rm","type":"rule"}}
@@ -55,6 +59,23 @@ portcullis check --policy tests/fixtures/policy-full.json --log audit.jsonl test
 {"at":"2026-11-07T08:12:42.244792+00:00","call_digest":"sha256:22423464240d7a30193a40d5d6f065bc72d05cdab2ab0e7e53927c922eb14a63","decision":"allow","format":"portcullis-decision/1","interpreter":false,"reason":"listing is fine","rewritten_call":null,"source":{"rule":"allow-ls","type":"rule"}}
 exit 0
 ```
+
+## Architecture
+
+![portcullis architecture](docs/assets/architecture.svg)
+
+Every proposed call passes through one fixed sequence so permissive rules can never shadow a safety block, and every delivered decision is appended to the JSON Lines audit log before returning.
+
+| Evaluation step | Condition checked | Decision and CLI exit |
+| --- | --- | --- |
+| `0. strict_parse` | Rejects malformed JSON or duplicate object keys at any depth | Caller error at `exit 2` with no decision appended |
+| `1. Call schema` | Verifies `portcullis-call/1` fields for `shell`, `file`, or `network` | `deny` (`source.type` set to `malformed`, `exit 1`) |
+| `2. Policy check` | Fails closed when the policy cannot be read, parsed, or validated | `deny` (`source.type` set to `policy error`, `exit 1`) |
+| `3. Deny rules` | Evaluates every matching `deny` rule in policy order first | `deny` on first match (`exit 1`) |
+| `4. Allow, rewrite, judge` | Evaluates surviving `allow`, `rewrite`, and `judge` rules in order | `allow` or `rewrite` (`exit 0`), or `judge` referral (`allow` at `exit 0`, `deny` or `escalate` at `exit 1`) |
+| `5. Policy default` | Closes any call that matched no rule | Policy `default` (`allow` at `exit 0` or `deny` at `exit 1`) |
+
+When a `judge` rule matches, Portcullis builds a canonical consultation request for `judgment.model` (defaulting to `jev-1.14.0`) and emits a `portcullis-decision/2` record where confidence below `judgment.threshold` or any consultation failure never allows the call, resolving to `escalate` under `queue` or `deny` under `none`.
 
 ## Usage
 
@@ -212,7 +233,7 @@ Portcullis is completely standalone and depends on zero sibling packages. In hos
 
 ## Guides and examples
 
-Read [docs/GUIDE.md](docs/GUIDE.md) for the operator and policy authoring guide covering fixed evaluation order, shell and file and network matchers, `move` destination `path2` normalization, `rewrite` staging, System One referrals, and audit log sampling. Start from the coding-agent policy template in [examples/policies/coding_agent_policy.json](examples/policies/coding_agent_policy.json), run the self-contained Rust and Python quickstarters in [examples/quickstart.rs](examples/quickstart.rs) and [examples/agent_gate.py](examples/agent_gate.py), or connect live System One providers through [examples/decision_judge.py](examples/decision_judge.py).
+Read [docs/GUIDE.md](docs/GUIDE.md) for the operator and policy authoring guide covering fixed evaluation order, shell and file and network matchers, `move` destination `path2` normalization, `rewrite` staging, System One referrals, and audit log sampling, and see [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md) for contributor gates and vulnerability reporting. Start from the coding-agent policy template in [examples/policies/coding_agent_policy.json](examples/policies/coding_agent_policy.json), run the self-contained Rust and Python quickstarters in [examples/quickstart.rs](examples/quickstart.rs) and [examples/agent_gate.py](examples/agent_gate.py), or connect live System One providers through [examples/decision_judge.py](examples/decision_judge.py).
 
 ```
 cargo build --bin portcullis
