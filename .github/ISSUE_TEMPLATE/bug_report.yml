@@ -1,0 +1,44 @@
+name: Bug report
+description: Report a reproducible defect or contract discrepancy in portcullis
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting an issue in `portcullis`. For security vulnerabilities, do not file a public issue and instead use private reporting as described in `SECURITY.md`.
+  - type: input
+    id: version
+    attributes:
+      label: "Portcullis version or commit SHA"
+      description: Output of `portcullis --version` or the exact git commit SHA
+      placeholder: "portcullis 0.2.0"
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Operating system, architecture, and Rust or Python version
+      placeholder: "Linux x86_64 (Ubuntu 24.04), Rust 1.91.1"
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction steps
+      description: Provide sanitized commands or a self-contained snippet using synthetic test values only
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior (and relevant CONTRACT.md obligation if applicable)
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior and full error output
+    validations:
+      required: true

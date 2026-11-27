@@ -2,6 +2,8 @@
 
 Portcullis is a deterministic local tool-call firewall that sits between an autonomous agent and the host machine. A harness passes a `portcullis-policy/1` document and one structured `portcullis-call/1` record, and Portcullis returns one canonical decision record (`allow`, `deny`, `rewrite`, or `escalate`) and appends that record to a line-validated JSON Lines audit log before the decision counts as delivered.
 
+![portcullis architecture](assets/architecture.svg)
+
 ## 1. Fixed evaluation order
 
 Unparseable JSON or JSON carrying duplicate keys at any depth is rejected immediately by `strict_parse` as a caller error (`exit 2` on the CLI, raising `CallerError` in the binding) without delivering or appending a decision. Every strictly parsed call document then runs in one fixed order defined by `CONTRACT.md` so a permissive rule can never shadow a safety block.

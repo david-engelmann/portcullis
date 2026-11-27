@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 360" width="1200" height="360" role="img">
+  <defs>
+    <linearGradient id="pc-hero-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0b101b"/>
+      <stop offset="55%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#0b1120"/>
+    </linearGradient>
+    <linearGradient id="pc-hero-accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="100%" stop-color="#818cf8"/>
+    </linearGradient>
+    <linearGradient id="pc-hero-panel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#151f32"/>
+      <stop offset="100%" stop-color="#0f172a"/>
+    </linearGradient>
+    <pattern id="pc-hero-grid" width="24" height="24" patternUnits="userSpaceOnUse">
+      <circle cx="2" cy="2" r="1" fill="#94a3b8" fill-opacity="0.10"/>
+    </pattern>
+  </defs>
+  <rect x="4" y="4" width="1192" height="352" rx="18" fill="url(#pc-hero-bg)" stroke="#243247" stroke-width="1.5"/>
+  <rect x="4" y="4" width="1192" height="352" rx="18" fill="url(#pc-hero-grid)"/>
+  <path d="M 22 4.75 L 1178 4.75" stroke="url(#pc-hero-accent)" stroke-width="2.5" stroke-linecap="round"/>
+  <rect x="48" y="48" width="52" height="52" rx="13" fill="#0d2538" stroke="#38bdf8" stroke-width="1.5"/>
+  <path d="M 62 58 L 86 58 M 62 68 L 86 68 M 66 56 L 66 86 M 74 56 L 74 88 M 82 56 L 82 86" fill="none" stroke="#38bdf8" stroke-width="2.4" stroke-linecap="round"/>
+  <text x="116" y="85" font-family='ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif' font-size="38" font-weight="800" fill="#f8fafc" letter-spacing="-0.8">portcullis</text>
+  <rect x="304" y="60" width="66" height="24" rx="12" fill="#0d2538" stroke="#38bdf8" stroke-width="1"/>
+  <text x="337" y="76" text-anchor="middle" font-family='ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace' font-size="12" font-weight="700" fill="#7dd3fc">v0.2.0</text>
+
+  <text x="48" y="134" font-family='ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif' font-size="20" font-weight="600" fill="#e2e8f0">Local tool-call firewall for shell, file, and network calls</text>
+  <text x="48" y="166" font-family='ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif' font-size="14" fill="#94a3b8">Fixed evaluation order where deny rules always preempt allow, rewrite, and judge.</text>
+  <text x="48" y="188" font-family='ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif' font-size="14" fill="#94a3b8">Canonical SHA-256 digests, JSONL audit logging, and System One model referrals.</text>
+
+  <rect x="48" y="224" width="198" height="28" rx="14" fill="#0e2235" stroke="#38bdf8" stroke-width="1"/>
+  <text x="147" y="242" text-anchor="middle" font-family='ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace' font-size="12" fill="#bae6fd">Rust + CLI + Python abi3</text>
+  <rect x="258" y="224" width="172" height="28" rx="14" fill="#131c2e" stroke="#334155" stroke-width="1"/>
+  <text x="344" y="242" text-anchor="middle" font-family='ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace' font-size="12" fill="#cbd5e1">portcullis-policy/1</text>
+  <rect x="442" y="224" width="164" height="28" rx="14" fill="#131c2e" stroke="#334155" stroke-width="1"/>
+  <text x="524" y="242" text-anchor="middle" font-family='ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace' font-size="12" fill="#cbd5e1">path + move path2</text>
+  <rect x="48" y="264" width="184" height="28" rx="14" fill="#131c2e" stroke="#334155" stroke-width="1"/>
+  <text x="140" y="282" text-anchor="middle" font-family='ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace' font-size="12" fill="#cbd5e1">jev-1.14.0 + 5 families</text>
+  <rect x="244" y="264" width="174" height="28" rx="14" fill="#131c2e" stroke="#334155" stroke-width="1"/>
+  <text x="331" y="282" text-anchor="middle" font-family='ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace' font-size="12" fill="#cbd5e1">Risk-ranked sampling</text>
+  <rect x="430" y="264" width="176" height="28" rx="14" fill="#131c2e" stroke="#334155" stroke-width="1"/>
+  <text x="518" y="282" text-anchor="middle" font-family='ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace' font-size="12" fill="#cbd5e1">Executes nothing</text>
+
+  <rect x="620" y="30" width="548" height="300" rx="14" fill="url(#pc-hero-panel)" stroke="#293548" stroke-width="1.2"/>
+  <rect x="636" y="52" width="516" height="44" rx="9" fill="#311217" stroke="#ef4444" stroke-width="1.2"/>
+  <text x="652" y="71" font-family='ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace' font-size="11" font-weight="700" fill="#ef4444">SHELL</text>
+  <text x="652" y="87" font-family='ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace' font-size="11.5" fill="#e2e8f0">argv: ["/bin/rm", "-rf", "/work"]</text>
+  <text x="1138" y="71" text-anchor="end" font-family='ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace' font-size="12" font-weight="700" fill="#ef4444">DENY</text>
+  <text x="1138" y="87" text-anchor="end" font-family='ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace' font-size="11" fill="#cbd5e1">rule: deny-rm-path</text>
+  <rect x="636" y="106" width="516" height="44" rx="9" fill="#231433" stroke="#a855f7" stroke-width="1.2"/>
+  <text x="652" y="125" font-family='ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace' font-size="11" font-weight="700" fill="#a855f7">FILE</text>
+  <text x="652" y="141" font-family='ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace' font-size="11.5" fill="#e2e8f0">write "/work/out/patch.diff"</text>
+  <text x="1138" y="125" text-anchor="end" font-family='ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace' font-size="12" font-weight="700" fill="#a855f7">REWRITE</text>
+  <text x="1138" y="141" text-anchor="end" font-family='ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace' font-size="11" fill="#cbd5e1">-> /work/staging/out.txt</text>
+  <rect x="636" y="160" width="516" height="44" rx="9" fill="#311217" stroke="#ef4444" stroke-width="1.2"/>
+  <text x="652" y="179" font-family='ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace' font-size="11" font-weight="700" fill="#ef4444">FILE</text>
+  <text x="652" y="195" font-family='ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace' font-size="11.5" fill="#e2e8f0">move path2: "/var/../etc/hosts"</text>
+  <text x="1138" y="179" text-anchor="end" font-family='ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace' font-size="12" font-weight="700" fill="#ef4444">DENY</text>
+  <text x="1138" y="195" text-anchor="end" font-family='ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace' font-size="11" fill="#cbd5e1">normpath -> /etc/hosts</text>
+  <rect x="636" y="214" width="516" height="44" rx="9" fill="#0c291a" stroke="#22c55e" stroke-width="1.2"/>
+  <text x="652" y="233" font-family='ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace' font-size="11" font-weight="700" fill="#22c55e">FILE</text>
+  <text x="652" y="249" font-family='ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace' font-size="11.5" fill="#e2e8f0">read "/work/src/lib.rs"</text>
+  <text x="1138" y="233" text-anchor="end" font-family='ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace' font-size="12" font-weight="700" fill="#22c55e">ALLOW</text>
+  <text x="1138" y="249" text-anchor="end" font-family='ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace' font-size="11" fill="#cbd5e1">rule: allow-work-read</text>
+  <rect x="636" y="268" width="516" height="44" rx="9" fill="#0c2438" stroke="#38bdf8" stroke-width="1.2"/>
+  <text x="652" y="287" font-family='ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace' font-size="11" font-weight="700" fill="#38bdf8">SHELL</text>
+  <text x="652" y="303" font-family='ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace' font-size="11.5" fill="#e2e8f0">argv: ["cargo", "test"]</text>
+  <text x="1138" y="287" text-anchor="end" font-family='ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace' font-size="12" font-weight="700" fill="#38bdf8">ALLOW</text>
+  <text x="1138" y="303" text-anchor="end" font-family='ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace' font-size="11" fill="#cbd5e1">jev-1.14.0 (conf 0.93)</text>
+</svg>
